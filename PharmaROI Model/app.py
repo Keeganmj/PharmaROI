@@ -3,7 +3,7 @@
 # Run: streamlit run app.py
 #
 # This app mirrors the sponsor-provided funnel stages, supports per-stage toggles,
-# ratio sliders, CAC inputs, and computes net ROI using a discount (gross -> net).
+# ratio sliders, CAC inputs, and computes net ROI using a discount (gross > net).
 #
 # Optional: Place "Madrigal Funnel.xlsx" in the same folder as this app.py to
 # pre-populate defaults. The app will still run without it.
