@@ -547,10 +547,10 @@ with st.sidebar:
 
     c1, c2 = st.columns(2)
     with c1:
-        if st.button("Reset: Sponsor Example", use_container_width=True):
+        if st.button("Reset: Sponsor Example",  width='stretch'):
             st.session_state["v2_state"] = SPONSOR_DEFAULTS.copy()
     with c2:
-        if st.button("Reset: Simple Demo", use_container_width=True):
+        if st.button("Reset: Simple Demo",  width='stretch'):
             st.session_state["v2_state"] = SIMPLE_DEMO_DEFAULTS.copy()
 
     st.divider()
@@ -741,7 +741,7 @@ else:
         )
 
     # Show table
-    st.dataframe(df_display, use_container_width=True, hide_index=True)
+    st.dataframe(df_display,  width='stretch', hide_index=True)
 
 
 # Chart: Net Revenue vs Total Costs vs Net Profit
@@ -769,7 +769,7 @@ chart = (
     )
 )
 
-st.altair_chart(chart, use_container_width=True)
+st.altair_chart(chart,  width='stretch')
 
 with st.expander("Optional: Funnel Visualization"):
     funnel_viz = [{"Stage": r.name, "Patients": r.patients} for r in funnel_results]
@@ -787,7 +787,7 @@ with st.expander("Optional: Funnel Visualization"):
                 tooltip=[alt.Tooltip("Patients:Q", format=",.0f"), "Stage:N"],
             )
         )
-        st.altair_chart(fchart, use_container_width=True)
+        st.altair_chart(fchart,  width='stretch')
 
 st.divider()
 st.subheader("How to interpret")
