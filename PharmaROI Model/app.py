@@ -15,13 +15,24 @@ from __future__ import annotations
 import subprocess
 import sys
 import os
+from pathlib import Path
 
 # Run Streamlit automatically, directly from Python file. Just hit play button.
 if __name__ == "__main__":
-    # Check if running directly with Python (not via streamlit)
+    # Ensure we execute in the directory that contains this file
+    cwd = Path(__file__).resolve().parent
+
+    # Prevent relaunch loop when Streamlit imports this file
     if os.environ.get("STREAMLIT_SCRIPT_RUNNING") != "1":
         os.environ["STREAMLIT_SCRIPT_RUNNING"] = "1"
-        subprocess.run(["streamlit", "run", __file__] + sys.argv[1:])
+
+        # Use the same interpreter that is running this script:
+        # python -m streamlit run <this_file>
+        subprocess.run(
+            [sys.executable, "-m", "streamlit", "run", str(Path(__file__).resolve()), *sys.argv[1:]],
+            check=True,
+            cwd=str(cwd),  # so relative files like "Madrigal Funnel.xlsx" resolve correctly
+        )
         sys.exit()
 
 from dataclasses import dataclass
@@ -677,6 +688,7 @@ fin = compute_financials(
 )
 
 
+
 # -----------------------------
 # Main UI
 # -----------------------------
@@ -829,3 +841,4 @@ with st.expander("▶ How to run"):
 """,
         language="text",
     )
+    
