@@ -555,10 +555,10 @@ with st.sidebar:
     with c2:
         if st.button("Reset: Zero", width='stretch'):
             st.session_state["v2_state"] = ZERO_SAMPLE.copy()
-            st.session_state["v2_state"]["stage_names"] = STAGE_NAMES.copy()
+            st.session_state["v2_state"]["stage_names"] = ["Insert Funnel Name"] * len(STAGE_NAMES)
             # Clear widget keys so they re-render
             for idx in range(len(STAGE_NAMES)):
-                for key in [f"active_{idx}", f"ratio_{idx}", f"cac_{idx}"]:
+                for key in [f"active_{idx}", f"ratio_{idx}", f"cac_{idx}", f"stage_name_{idx}"]:
                     if key in st.session_state:
                         del st.session_state[key]
     st.divider()
