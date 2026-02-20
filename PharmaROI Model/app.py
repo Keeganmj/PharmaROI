@@ -10,7 +10,20 @@
 
 # Run Command (copy and paste into terminal): streamlit run "PharmaROI Model/app.py"
 
+from __future__ import annotations
+
+import subprocess
+import sys
+import os
+from pathlib import Path
+
 # Run Streamlit automatically, directly from Python file. Just hit play button.
+if __name__ == "__main__":
+    # Check if running directly with Python (not via streamlit)
+    if os.environ.get("STREAMLIT_SCRIPT_RUNNING") != "1":
+        os.environ["STREAMLIT_SCRIPT_RUNNING"] = "1"
+        subprocess.run(["streamlit", "run", __file__] + sys.argv[1:])
+        sys.exit()
 
 from dataclasses import dataclass
 from pathlib import Path
@@ -665,6 +678,7 @@ fin = compute_financials(
 )
 
 
+
 # -----------------------------
 # Main UI
 # -----------------------------
@@ -817,3 +831,4 @@ with st.expander("▶ How to run"):
 """,
         language="text",
     )
+    
