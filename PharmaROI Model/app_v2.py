@@ -21,7 +21,7 @@ if __name__ == "__main__":
     # Check if running directly with Python (not via streamlit)
     if os.environ.get("STREAMLIT_SCRIPT_RUNNING") != "1":
         os.environ["STREAMLIT_SCRIPT_RUNNING"] = "1"
-        subprocess.run(["streamlit", "run", __file__] + sys.argv[1:])
+        subprocess.run([sys.executable, "-m", "streamlit", "run", __file__, *sys.argv[1:]])
         sys.exit()
 
 from dataclasses import dataclass
