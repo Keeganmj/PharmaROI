@@ -760,8 +760,6 @@ waterfall_data = [
     {"Metric": "Gross Revenue", "Start": 0, "End": fin["gross_revenue"], "Type": "revenue"},
     {"Metric": "Discount", "Start": fin["net_revenue"], "End": fin["gross_revenue"], "Type": "negative"},
     {"Metric": "Net Revenue", "Start": 0, "End": fin["net_revenue"], "Type": "subtotal"},
-    {"Metric": "Funnel CAC", "Start": fin["net_profit"], "End": fin["net_revenue"], "Type": "negative"},
-    {"Metric": "Net Profit", "Start": 0, "End": fin["net_profit"], "Type": "profit"},
 ]
 
 color_scale = alt.Scale(
