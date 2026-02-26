@@ -805,8 +805,8 @@ st.write(
     """
 - The funnel computes *patients at each stage* using the stage ratio (unless the stage is turned off).
 - CAC is applied per stage only when that stage is active.
-- **Stage CAC = Patients at Stage * CAC per Patient
-- **Total Funnel CAC = Sum of Stage CAC 1-13
+- **Stage CAC** = Patients at Stage x CAC per Patient
+- **Total Funnel CAC** = Sum of Stage CAC 1-13
 - **Gross Revenue** = Treated Patients × ARPP × Treatment Years  
 - **Net Revenue** = Gross Revenue × (1 − Discount)
 - **ROI (Net)** = Net Revenue / Total Funnel CAC
