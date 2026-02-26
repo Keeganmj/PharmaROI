@@ -753,6 +753,37 @@ else:
     # Show table
     st.dataframe(df_display, width='stretch', hide_index=True)
 
+# Waterfall Chart
+st.subheader("Revenue Waterfall")
+
+waterfall_data = [
+    {"Metric": "Gross Revenue", "Start": 0, "End": fin["gross_revenue"], "Type": "revenue"},
+    {"Metric": "Discount", "Start": fin["net_revenue"], "End": fin["gross_revenue"], "Type": "negative"},
+    {"Metric": "Net Revenue", "Start": 0, "End": fin["net_revenue"], "Type": "subtotal"},
+    {"Metric": "Funnel CAC", "Start": fin["net_profit"], "End": fin["net_revenue"], "Type": "negative"},
+    {"Metric": "Net Profit", "Start": 0, "End": fin["net_profit"], "Type": "profit"},
+]
+
+color_scale = alt.Scale(
+    domain=["revenue", "negative", "subtotal", "profit"],
+    range=[COLORS["revenue"], COLORS["danger"], COLORS["primary"], COLORS["profit"]],
+)
+
+waterfall_chart = (
+    alt.Chart(pd.DataFrame(waterfall_data))
+    .mark_bar()
+    .encode(
+        x=alt.X("Metric:N", sort=None, title=None),
+        y=alt.Y("Start:Q", title="USD"),
+        y2=alt.Y2("End:Q"),
+        color=alt.Color("Type:N", scale=color_scale, legend=None),
+        tooltip=[alt.Tooltip("Metric:N"), alt.Tooltip("End:Q", format="$,.0f")],
+    )
+)
+
+st.altair_chart(waterfall_chart, use_container_width=True)
+
+st.divider()
 
 # Chart: Net Revenue vs Total Costs vs Net Profit
 st.subheader("Financial Summary (Net Revenue vs Costs vs Net Profit)")
