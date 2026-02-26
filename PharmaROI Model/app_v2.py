@@ -569,7 +569,7 @@ with st.sidebar:
     st.session_state["v2_state"]["treatment_years"] = st.slider(
         "Length of treatment (years)",
         min_value=0.1,
-        max_value=10.0,
+        max_value=1.0,
         step=0.1,
         value=float(st.session_state["v2_state"]["treatment_years"]),
     )
