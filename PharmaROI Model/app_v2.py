@@ -757,9 +757,9 @@ else:
 st.subheader("Revenue Waterfall")
 
 waterfall_data = [
-    {"Metric": "Gross Revenue", "Start": 0, "End": fin["gross_revenue"], "Type": "revenue"},
-    {"Metric": "Discount", "Start": fin["net_revenue"], "End": fin["gross_revenue"], "Type": "negative"},
-    {"Metric": "Net Revenue", "Start": 0, "End": fin["net_revenue"], "Type": "subtotal"},
+    {"Metric": "Gross Revenue", "Start": 0, "End": fin["gross_revenue"], "Type": "revenue", "Label": fin["gross_revenue"]},
+    {"Metric": "Discount", "Start": fin["net_revenue"], "End": fin["gross_revenue"], "Type": "negative", "Label": -(fin["gross_revenue"] - fin["net_revenue"])},
+    {"Metric": "Net Revenue", "Start": 0, "End": fin["net_revenue"], "Type": "subtotal", "Label": fin["net_revenue"]},
 ]
 
 color_scale = alt.Scale(
@@ -767,19 +767,33 @@ color_scale = alt.Scale(
     range=[COLORS["revenue"], COLORS["danger"], COLORS["primary"], COLORS["profit"]],
 )
 
-waterfall_chart = (
+bars = (
     alt.Chart(pd.DataFrame(waterfall_data))
-    .mark_bar()
+    .mark_bar(cornerRadiusTopLeft=4, cornerRadiusTopRight=4, size=80)
     .encode(
-        x=alt.X("Metric:N", sort=None, title=None),
-        y=alt.Y("Start:Q", title="USD"),
+        x=alt.X("Metric:N", sort=None, title=None, axis=alt.Axis(labelAngle=0, labelFontSize=13)),
+        y=alt.Y("Start:Q", title="USD", axis=alt.Axis(format="$,.0f", labelFontSize=11)),
         y2=alt.Y2("End:Q"),
         color=alt.Color("Type:N", scale=color_scale, legend=None),
-        tooltip=[alt.Tooltip("Metric:N"), alt.Tooltip("End:Q", format="$,.0f")],
+        tooltip=[
+            alt.Tooltip("Metric:N", title="Stage"),
+            alt.Tooltip("Label:Q", format="$,.0f", title="Value"),
+        ],
     )
 )
 
-st.altair_chart(waterfall_chart, use_container_width=True)
+text = (
+    alt.Chart(pd.DataFrame(waterfall_data))
+    .mark_text(dy=-10, fontSize=12, fontWeight="bold")
+    .encode(
+        x=alt.X("Metric:N", sort=None),
+        y=alt.Y("End:Q"),
+        text=alt.Text("Label:Q", format="$,.0f"),
+        color=alt.Color("Type:N", scale=color_scale, legend=None),
+    )
+)
+
+st.altair_chart((bars + text).properties(height=400), use_container_width=True)
 
 st.divider()
 
