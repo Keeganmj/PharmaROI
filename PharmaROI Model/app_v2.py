@@ -576,7 +576,7 @@ with st.sidebar:
     st.session_state["v2_state"]["discount"] = st.slider(
         "Discount rate (gross → net)",
         min_value=0.0,
-        max_value=0.80,
+        max_value=1.0,
         step=0.01,
         value=float(st.session_state["v2_state"]["discount"]),
         help="Net Revenue = Gross Revenue × (1 − discount)",
