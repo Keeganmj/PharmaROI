@@ -301,7 +301,7 @@ init_session()
 # Page config
 # -----------------------------
 st.set_page_config(page_title="PharmaROI V3 — Multi-Model", page_icon="📈", layout="wide")
-st.title("📈 PharmaROI Intelligence — V3 (Multi-Model Comparison)")
+st.title("PharmaROI Intelligence — V3 (Multi-Model Comparison)")
 st.caption("Build multiple ROI models side-by-side and compare them in the Comparison tab.")
 
 
@@ -319,7 +319,7 @@ with mgmt_col1:
         st.rerun()
 
 with mgmt_col2:
-    if st.button("📋 Duplicate Current", use_container_width=True):
+    if st.button("Duplicate Current", use_container_width=True):
         idx = st.session_state["active_model_idx"]
         new_state = copy.deepcopy(st.session_state["models"][idx])
         new_name = st.session_state["model_names"][idx] + " (copy)"
@@ -330,7 +330,7 @@ with mgmt_col2:
 
 with mgmt_col3:
     can_delete = len(st.session_state["models"]) > 1
-    if st.button("🗑️ Delete Current", use_container_width=True, disabled=not can_delete):
+    if st.button("Delete Current", use_container_width=True, disabled=not can_delete):
         idx = st.session_state["active_model_idx"]
         st.session_state["models"].pop(idx)
         st.session_state["model_names"].pop(idx)
@@ -354,7 +354,7 @@ with mgmt_col4:
 # -----------------------------
 # Tabs: one per model + Comparison
 # -----------------------------
-tab_labels = st.session_state["model_names"] + ["📊 Comparison"]
+tab_labels = st.session_state["model_names"] + ["Comparison"]
 tabs = st.tabs(tab_labels)
 
 # Keep track of which tab is being viewed to set active_model_idx
@@ -368,7 +368,7 @@ for model_idx, model_tab in enumerate(tabs[:-1]):
 
         # When user clicks into this tab render its sidebar controls
         # We render controls inline (above a divider) since each tab has its own scope
-        with st.expander("⚙️ Model Settings", expanded=(model_idx == st.session_state["active_model_idx"])):
+        with st.expander("Model Settings", expanded=(model_idx == st.session_state["active_model_idx"])):
             st.session_state["active_model_idx"] = model_idx
 
             col_r1, col_r2 = st.columns(2)
@@ -416,7 +416,7 @@ for model_idx, model_tab in enumerate(tabs[:-1]):
             st.markdown("**Funnel Stages**")
             stage_names = state.get("stage_names", STAGE_NAMES[:])
 
-            with st.expander("✏️ Customize Stage Names"):
+            with st.expander("Customize Stage Names"):
                 for sidx in range(len(STAGE_NAMES)):
                     stage_names[sidx] = st.text_input(
                         f"Stage {sidx+1} name:",
@@ -565,7 +565,7 @@ for model_idx, model_tab in enumerate(tabs[:-1]):
 # Comparison Tab
 # -----------------------------
 with tabs[-1]:
-    st.subheader("📊 Model Comparison")
+    st.subheader("Model Comparison")
 
     if len(st.session_state["models"]) < 2:
         st.info("Add at least 2 models to compare them here.")
