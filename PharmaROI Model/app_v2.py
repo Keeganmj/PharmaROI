@@ -359,6 +359,33 @@ with mgmt_col4:
     )
     if new_name != st.session_state["model_names"][idx]:
         st.session_state["model_names"][idx] = new_name
+        # Model reordering controls
+if len(st.session_state["models"]) > 1:
+    reorder_col1, reorder_col2, reorder_col3 = st.columns([2, 2, 6])
+    idx = st.session_state["active_model_idx"]
+    
+    with reorder_col1:
+        can_move_left = idx > 0
+        if st.button("⬅️ Move Left", use_container_width=True, disabled=not can_move_left):
+            # Swap with previous
+            st.session_state["models"][idx], st.session_state["models"][idx - 1] = \
+                st.session_state["models"][idx - 1], st.session_state["models"][idx]
+            st.session_state["model_names"][idx], st.session_state["model_names"][idx - 1] = \
+                st.session_state["model_names"][idx - 1], st.session_state["model_names"][idx]
+            st.session_state["active_model_idx"] = idx - 1
+            st.rerun()
+    
+    with reorder_col2:
+        can_move_right = idx < len(st.session_state["models"]) - 1
+        if st.button("Move Right ➡️", use_container_width=True, disabled=not can_move_right):
+            # Swap with next
+            st.session_state["models"][idx], st.session_state["models"][idx + 1] = \
+                st.session_state["models"][idx + 1], st.session_state["models"][idx]
+            st.session_state["model_names"][idx], st.session_state["model_names"][idx + 1] = \
+                st.session_state["model_names"][idx + 1], st.session_state["model_names"][idx]
+            st.session_state["active_model_idx"] = idx + 1
+            st.rerun()
+
 
 
 # -----------------------------
