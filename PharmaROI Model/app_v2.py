@@ -700,6 +700,85 @@ with tabs[-1]:
             ).properties(height=350)
             st.altair_chart(stage_chart, use_container_width=True)
 
+                        # Diff View between two models
+            st.markdown("### Model Diff View")
+            if len(selected_names) >= 2:
+                diff_col1, diff_col2 = st.columns(2)
+                with diff_col1:
+                    diff_model_a = st.selectbox(
+                        "Model A:",
+                        options=selected_names,
+                        index=0,
+                        key="diff_model_a",
+                    )
+                with diff_col2:
+                    remaining = [n for n in selected_names if n != diff_model_a]
+                    diff_model_b = st.selectbox(
+                        "Model B:",
+                        options=remaining,
+                        index=0,
+                        key="diff_model_b",
+                    )
+                
+                idx_a = st.session_state["model_names"].index(diff_model_a)
+                idx_b = st.session_state["model_names"].index(diff_model_b)
+                state_a = st.session_state["models"][idx_a]
+                state_b = st.session_state["models"][idx_b]
+                
+                diff_rows = []
+                
+                # Compare top-level params
+                top_params = [
+                    ("Base Population", "base_population", "{:,.0f}"),
+                    ("ARPP", "arpp", "${:,.0f}"),
+                    ("Treatment Years", "treatment_years", "{:.1f}"),
+                    ("Discount", "discount", "{:.1%}"),
+                ]
+                for label, key, fmt in top_params:
+                    val_a = state_a.get(key, 0)
+                    val_b = state_b.get(key, 0)
+                    if val_a != val_b:
+                        diff_rows.append({
+                            "Parameter": label,
+                            f"{diff_model_a}": fmt.format(val_a),
+                            f"{diff_model_b}": fmt.format(val_b),
+                            "Difference": fmt.format(val_b - val_a) if "%" not in fmt else f"{(val_b - val_a)*100:+.1f}pp",
+                        })
+                
+                # Compare stage ratios and CAC
+                stage_names_a = state_a.get("stage_names", STAGE_NAMES)
+                for sidx in range(len(STAGE_NAMES)):
+                    stage_label = stage_names_a[sidx][:30] + ("..." if len(stage_names_a[sidx]) > 30 else "")
+                    
+                    ratio_a = state_a["ratios"][sidx]
+                    ratio_b = state_b["ratios"][sidx]
+                    if ratio_a != ratio_b and sidx > 0:
+                        diff_rows.append({
+                            "Parameter": f"Stage {sidx+1} Ratio",
+                            f"{diff_model_a}": f"{ratio_a:.1%}",
+                            f"{diff_model_b}": f"{ratio_b:.1%}",
+                            "Difference": f"{(ratio_b - ratio_a)*100:+.1f}pp",
+                        })
+                    
+                    cac_a = state_a["cac"][sidx]
+                    cac_b = state_b["cac"][sidx]
+                    if cac_a != cac_b:
+                        diff_rows.append({
+                            "Parameter": f"Stage {sidx+1} CAC",
+                            f"{diff_model_a}": f"${cac_a:,.0f}",
+                            f"{diff_model_b}": f"${cac_b:,.0f}",
+                            "Difference": f"${cac_b - cac_a:+,.0f}",
+                        })
+                
+                if diff_rows:
+                    diff_df = pd.DataFrame(diff_rows)
+                    st.dataframe(diff_df, use_container_width=True, hide_index=True)
+                else:
+                    st.success("These two models have identical parameters!")
+            else:
+                st.info("Select at least 2 models above to see a diff view.")
+
+
             # Download comparison
             st.markdown("### Export Comparison")
             comp_csv = comp_df.to_csv(index=False).encode("utf-8")
