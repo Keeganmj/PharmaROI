@@ -685,7 +685,7 @@ with tabs[-1]:
             # Stage-level patient comparison
             st.markdown("### Funnel Stage Comparison (Patients)")
             stage_rows = []
-                for midx, (mstate, mname) in enumerate(zip(selected_models, selected_names)):
+            for midx, (mstate, mname) in enumerate(zip(selected_models, selected_names)):
 
                 fr, _ = run_model(mstate)
                 for r in fr:
