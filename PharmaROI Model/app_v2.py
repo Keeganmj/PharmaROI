@@ -319,14 +319,24 @@ with mgmt_col1:
         st.rerun()
 
 with mgmt_col2:
-    if st.button("Duplicate Current", use_container_width=True):
-        idx = st.session_state["active_model_idx"]
-        new_state = copy.deepcopy(st.session_state["models"][idx])
-        new_name = st.session_state["model_names"][idx] + " (copy)"
+    copy_options = st.session_state["model_names"]
+    copy_source = st.selectbox(
+        "Copy from:",
+        options=range(len(copy_options)),
+        format_func=lambda i: copy_options[i],
+        index=st.session_state["active_model_idx"],  # Defaults to current model
+        key="copy_source_select",
+        label_visibility="collapsed",
+    )
+    if st.button("📋 Copy This Model", use_container_width=True):
+        source_idx = copy_source
+        new_state = copy.deepcopy(st.session_state["models"][source_idx])
+        new_name = st.session_state["model_names"][source_idx] + " (copy)"
         st.session_state["models"].append(new_state)
         st.session_state["model_names"].append(new_name)
         st.session_state["active_model_idx"] = len(st.session_state["models"]) - 1
         st.rerun()
+
 
 with mgmt_col3:
     can_delete = len(st.session_state["models"]) > 1
