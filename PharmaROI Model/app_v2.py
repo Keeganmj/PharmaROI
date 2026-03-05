@@ -634,7 +634,7 @@ with tabs[-1]:
             st.markdown("### Charts")
             chart_col1, chart_col2 = st.columns(2)
 
-                        model_color_scale = alt.Scale(
+            model_color_scale = alt.Scale(
                 domain=selected_names,
                 range=TAB_PALETTE[:len(selected_names)],
             )
