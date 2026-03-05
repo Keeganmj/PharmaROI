@@ -582,9 +582,29 @@ with tabs[-1]:
     if len(st.session_state["models"]) < 2:
         st.info("Add at least 2 models to compare them here.")
     else:
+        # Model selection filter
+        st.markdown("**Select models to compare:**")
+        selected_model_names = st.multiselect(
+            "Choose models",
+            options=st.session_state["model_names"],
+            default=st.session_state["model_names"],
+            key="comparison_model_select",
+            label_visibility="collapsed",
+        )
+        
+        if len(selected_model_names) < 2:
+            st.warning("Please select at least 2 models to compare.")
+            st.stop()
+        
+        # Filter to selected models only
+        selected_indices = [i for i, name in enumerate(st.session_state["model_names"]) if name in selected_model_names]
+        selected_models = [st.session_state["models"][i] for i in selected_indices]
+        selected_names = [st.session_state["model_names"][i] for i in selected_indices]
+        
         # Build comparison data
         comparison_rows = []
-        for midx, (mstate, mname) in enumerate(zip(st.session_state["models"], st.session_state["model_names"])):
+        for midx, (mstate, mname) in enumerate(zip(selected_models, selected_names)):
+
             funnel_results, fin = run_model(mstate)
             roi = fin["roi_net"]
             comparison_rows.append({
@@ -614,10 +634,11 @@ with tabs[-1]:
             st.markdown("### Charts")
             chart_col1, chart_col2 = st.columns(2)
 
-            model_color_scale = alt.Scale(
-                domain=st.session_state["model_names"],
-                range=TAB_PALETTE[:len(st.session_state["model_names"])],
+                        model_color_scale = alt.Scale(
+                domain=selected_names,
+                range=TAB_PALETTE[:len(selected_names)],
             )
+
 
             with chart_col1:
                 st.markdown("**ROI (Net)**")
@@ -664,7 +685,8 @@ with tabs[-1]:
             # Stage-level patient comparison
             st.markdown("### Funnel Stage Comparison (Patients)")
             stage_rows = []
-            for midx, (mstate, mname) in enumerate(zip(st.session_state["models"], st.session_state["model_names"])):
+                for midx, (mstate, mname) in enumerate(zip(selected_models, selected_names)):
+
                 fr, _ = run_model(mstate)
                 for r in fr:
                     stage_rows.append({"Model": mname, "Stage": r.name[:40] + ("…" if len(r.name) > 40 else ""), "Patients": r.patients})
