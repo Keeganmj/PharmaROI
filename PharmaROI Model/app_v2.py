@@ -340,12 +340,31 @@ with mgmt_col2:
 
 with mgmt_col3:
     can_delete = len(st.session_state["models"]) > 1
-    if st.button("Delete Current", use_container_width=True, disabled=not can_delete):
+    
+    # Initialize confirmation state
+    if "confirm_delete" not in st.session_state:
+        st.session_state["confirm_delete"] = False
+    
+    if not st.session_state["confirm_delete"]:
+        if st.button("Delete Current", use_container_width=True, disabled=not can_delete):
+            st.session_state["confirm_delete"] = True
+            st.rerun()
+    else:
         idx = st.session_state["active_model_idx"]
-        st.session_state["models"].pop(idx)
-        st.session_state["model_names"].pop(idx)
-        st.session_state["active_model_idx"] = max(0, idx - 1)
-        st.rerun()
+        st.warning(f"Delete '{st.session_state['model_names'][idx]}'?")
+        confirm_cols = st.columns(2)
+        with confirm_cols[0]:
+            if st.button("Yes, Delete", use_container_width=True, type="primary"):
+                st.session_state["models"].pop(idx)
+                st.session_state["model_names"].pop(idx)
+                st.session_state["active_model_idx"] = max(0, idx - 1)
+                st.session_state["confirm_delete"] = False
+                st.rerun()
+        with confirm_cols[1]:
+            if st.button("Cancel", use_container_width=True):
+                st.session_state["confirm_delete"] = False
+                st.rerun()
+
 
 with mgmt_col4:
     # Rename current model
