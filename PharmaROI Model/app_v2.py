@@ -470,7 +470,7 @@ for model_idx, model_tab in enumerate(tabs[:-1]):
                     value=float(state["discount"]),
                     key=f"discount_{model_idx}",
                 )
-
+        
             st.markdown("**Funnel Stages**")
             stage_names = state.get("stage_names", STAGE_NAMES[:])
 
@@ -546,7 +546,8 @@ for model_idx, model_tab in enumerate(tabs[:-1]):
             f"Gross: **\\${fin['gross_revenue']:,.0f}**  |  "
             f"Discount: **{fin['discount']*100:.1f}%**  |  "
             f"Discount Amount: **\\${fin['gross_revenue'] - fin['net_revenue']:,.0f}**  |  " 
-            )
+            f"Net Revenue per Rx: **\\${(float(state['arpp']) * (1 - fin['discount'])):,.0f}**"           
+        )
 
         # ----- Funnel table -----
         st.subheader("Funnel Table")
