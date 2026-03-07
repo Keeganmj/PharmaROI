@@ -538,14 +538,15 @@ for model_idx, model_tab in enumerate(tabs[:-1]):
         k1.metric("ROI (Net)", roix(roi) if roi == roi else "—")
         k2.metric("Treated Patients", number(fin["treated_patients"]))
         k3.metric("Net Revenue", money(fin["net_revenue"]))
-        k4.metric("Gross Revenue", money(fin["gross_revenue"]))
-        k5.metric("Funnel CAC", money(fin["funnel_cac_total"]))
+        k4.metric("Funnel CAC", money(fin["funnel_cac_total"]))
+        k5.metric("Total CAC", money(fin["funnel_cac_total"] + fin["platform_costs_total"]))
+
 
         st.markdown(
-            f"Gross: **{money(fin['gross_revenue'])}**  |  "
+            f"Gross: **\\${fin['gross_revenue']:,.0f}**  |  "
             f"Discount: **{fin['discount']*100:.1f}%**  |  "
-            f"Net: **{money(fin['net_revenue'])}**"
-        )
+            f"Discount Amount: **\\${fin['gross_revenue'] - fin['net_revenue']:,.0f}**  |  " 
+            )
 
         # ----- Funnel table -----
         st.subheader("Funnel Table")
