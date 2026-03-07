@@ -1,5 +1,6 @@
 # app.py
 # PharmaROI Intelligence — V4 (Baseline vs Dario Comparison)
+# Stabilized and cleaned version
 # Run: streamlit run app.py
 
 from __future__ import annotations
@@ -22,6 +23,7 @@ try:
 except Exception:
     pd = None
 
+
 # =============================================================================
 # COLOR PALETTE
 # =============================================================================
@@ -33,15 +35,16 @@ COLORS = {
     "warning": "#F59E0B",
     "danger": "#EF4444",
     "muted": "#6B7280",
-    "baseline": "#6B7280",      # Gray for baseline
-    "dario": "#0F6CBD",         # Blue for Dario
-    "incremental": "#10B981",   # Green for incremental/lift
+    "baseline": "#6B7280",
+    "dario": "#0F6CBD",
+    "incremental": "#10B981",
 }
 
 TAB_PALETTE = [
     "#0F6CBD", "#10B981", "#F59E0B", "#EF4444",
     "#8B5CF6", "#EC4899", "#06B6D4", "#84CC16",
 ]
+
 
 # =============================================================================
 # FUNNEL STAGE DEFINITIONS
@@ -64,55 +67,57 @@ STAGE_NAMES: List[str] = [
 
 NUM_STAGES = len(STAGE_NAMES)
 
+# Stage 6 (index 5) is where CAC is applied - this creates the "CAC pool"
+CAC_POOL_STAGE_INDEX = 5
+
+
 # =============================================================================
 # DEFAULT SCENARIO CONFIGURATIONS
 # =============================================================================
 def get_default_scenario(scenario_type: str = "dario") -> dict:
     """
     Returns default values for a scenario (baseline or dario).
-    Baseline has lower conversion rates and different CAC assumptions.
+    
+    CAC LOGIC:
+    - Only Stage 6 CAC matters - it creates the total CAC pool
+    - Stages 1-5 have no CAC
+    - Stages 7-13 inherit CAC from the pool (auto-calculated)
     """
     if scenario_type == "baseline":
         return {
             "base_population": 10_000_000,
             "ratios": [1.00, 0.30, 0.12, 0.18, 0.60, 0.25, 0.10, 0.65, 0.85, 0.60, 0.80, 0.35, 0.80],
-            "cac": [0.0, 0.0, 0.0, 0.0, 0.0, 8.0, 50.0, 65.0, 65.0, 90.0, 100.0, 200.0, 220.0],
+            "stage_6_cac": 8.0,  # Only CAC input that matters
             "arpp": 47_400.0,
             "treatment_years": 1.0,
             "discount": 0.68,
             "stage_active": [True] * NUM_STAGES,
             "platform_costs": {
-                "dario_connect_config": 0.0,
-                "dario_care_config": 0.0,
-                "sub_dario_connect": 0.0,
-                "sub_dario_care": 0.0,
-                "maintenance_support": 0.0,
+                "config_costs": 0.0,
+                "subscription_costs": 0.0,
+                "maintenance_costs": 0.0,
             },
-            # CAC mode: "direct" or "sensitivity"
             "cac_mode": "direct",
-            # Sensitivity settings (used when cac_mode == "sensitivity")
             "cac_sensitivity": {
                 "min": 5.0,
                 "max": 20.0,
                 "step": 1.0,
-                "base": 10.0,  # Base case for sensitivity
+                "base": 8.0,
             },
         }
     else:  # dario
         return {
             "base_population": 10_000_000,
             "ratios": [1.00, 0.35, 0.16, 0.22, 0.75, 0.40, 0.15, 0.80, 1.00, 0.75, 0.90, 0.50, 0.90],
-            "cac": [0.0, 0.0, 0.0, 0.0, 0.0, 10.0, 67.0, 83.0, 83.0, 111.0, 123.0, 247.0, 274.0],
+            "stage_6_cac": 10.0,  # Only CAC input that matters
             "arpp": 47_400.0,
             "treatment_years": 1.0,
             "discount": 0.68,
             "stage_active": [True] * NUM_STAGES,
             "platform_costs": {
-                "dario_connect_config": 500_000.0,
-                "dario_care_config": 500_000.0,
-                "sub_dario_connect": 1_000_000.0,
-                "sub_dario_care": 250_000.0,
-                "maintenance_support": 250_000.0,
+                "config_costs": 1_000_000.0,
+                "subscription_costs": 1_250_000.0,
+                "maintenance_costs": 250_000.0,
             },
             "cac_mode": "direct",
             "cac_sensitivity": {
@@ -125,10 +130,7 @@ def get_default_scenario(scenario_type: str = "dario") -> dict:
 
 
 def get_default_model() -> dict:
-    """
-    Returns the default structure for a model with shared settings,
-    baseline scenario, and dario scenario.
-    """
+    """Returns the default structure for a model."""
     return {
         "shared": {
             "stage_names": STAGE_NAMES[:],
@@ -144,25 +146,23 @@ def get_zero_model() -> dict:
     """Returns a zeroed-out model for fresh starts."""
     zero_scenario = {
         "base_population": 0,
-        "ratios": [0.0] * NUM_STAGES,
-        "cac": [0.0] * NUM_STAGES,
+        "ratios": [1.0] + [0.0] * (NUM_STAGES - 1),
+        "stage_6_cac": 0.0,
         "arpp": 0.0,
         "treatment_years": 1.0,
         "discount": 0.0,
         "stage_active": [True] * NUM_STAGES,
         "platform_costs": {
-            "dario_connect_config": 0.0,
-            "dario_care_config": 0.0,
-            "sub_dario_connect": 0.0,
-            "sub_dario_care": 0.0,
-            "maintenance_support": 0.0,
+            "config_costs": 0.0,
+            "subscription_costs": 0.0,
+            "maintenance_costs": 0.0,
         },
         "cac_mode": "direct",
-        "cac_sensitivity": {"min": 0.0, "max": 0.0, "step": 1.0, "base": 0.0},
+        "cac_sensitivity": {"min": 0.0, "max": 10.0, "step": 1.0, "base": 0.0},
     }
     return {
         "shared": {
-            "stage_names": ["Stage " + str(i+1) for i in range(NUM_STAGES)],
+            "stage_names": STAGE_NAMES[:],
             "use_shared_base_population": True,
             "shared_base_population": 0,
         },
@@ -174,40 +174,61 @@ def get_zero_model() -> dict:
 # =============================================================================
 # MIGRATION HELPER — Upgrade old models to new structure
 # =============================================================================
-def migrate_old_model(old_model: dict) -> dict:
+def migrate_model(old_model: dict) -> dict:
     """
-    Converts an old single-scenario model to the new baseline/dario structure.
-    The old model becomes the 'dario' scenario; baseline gets defaults.
+    Ensures model is in the current format.
+    Handles both old V3 format and old V4 format with cac[] arrays.
     """
-    # Check if already in new format
+    # Already in new format
     if "shared" in old_model and "baseline" in old_model and "dario" in old_model:
+        # Check if using old cac[] array format
+        if "cac" in old_model["baseline"] and "stage_6_cac" not in old_model["baseline"]:
+            old_model["baseline"]["stage_6_cac"] = old_model["baseline"]["cac"][CAC_POOL_STAGE_INDEX]
+            old_model["dario"]["stage_6_cac"] = old_model["dario"]["cac"][CAC_POOL_STAGE_INDEX]
+        
+        # Migrate old platform_costs format
+        for scenario_key in ["baseline", "dario"]:
+            scenario = old_model[scenario_key]
+            if "platform_costs" in scenario:
+                pc = scenario["platform_costs"]
+                # Convert old format to new
+                if "dario_connect_config" in pc:
+                    new_pc = {
+                        "config_costs": pc.get("dario_connect_config", 0) + pc.get("dario_care_config", 0),
+                        "subscription_costs": pc.get("sub_dario_connect", 0) + pc.get("sub_dario_care", 0),
+                        "maintenance_costs": pc.get("maintenance_support", 0),
+                    }
+                    scenario["platform_costs"] = new_pc
+        
         return old_model
     
-    # Create new structure
+    # Old V3 single-scenario format - convert to baseline/dario
     new_model = get_default_model()
     
-    # Migrate shared settings
     new_model["shared"]["stage_names"] = old_model.get("stage_names", STAGE_NAMES[:])
     new_model["shared"]["shared_base_population"] = old_model.get("base_population", 10_000_000)
     
-    # Migrate old model to dario scenario
+    # Old model becomes dario scenario
     new_model["dario"]["base_population"] = old_model.get("base_population", 10_000_000)
     new_model["dario"]["ratios"] = old_model.get("ratios", get_default_scenario("dario")["ratios"])
-    new_model["dario"]["cac"] = old_model.get("cac", get_default_scenario("dario")["cac"])
     new_model["dario"]["arpp"] = old_model.get("arpp", 47_400.0)
     new_model["dario"]["treatment_years"] = old_model.get("treatment_years", 1.0)
     new_model["dario"]["discount"] = old_model.get("discount", 0.68)
     new_model["dario"]["stage_active"] = old_model.get("stage_active", [True] * NUM_STAGES)
-    new_model["dario"]["platform_costs"] = old_model.get("platform_costs", get_default_scenario("dario")["platform_costs"])
     
-    # Baseline gets slightly lower conversion rates (estimated)
+    # Extract Stage 6 CAC from old cac array
+    if "cac" in old_model:
+        new_model["dario"]["stage_6_cac"] = old_model["cac"][CAC_POOL_STAGE_INDEX]
+    
+    # Baseline gets lower ratios
     baseline_ratios = [r * 0.85 for r in new_model["dario"]["ratios"]]
-    baseline_ratios[0] = 1.0  # First stage is always 1.0
+    baseline_ratios[0] = 1.0
     new_model["baseline"]["ratios"] = baseline_ratios
     new_model["baseline"]["base_population"] = new_model["dario"]["base_population"]
     new_model["baseline"]["arpp"] = new_model["dario"]["arpp"]
     new_model["baseline"]["treatment_years"] = new_model["dario"]["treatment_years"]
     new_model["baseline"]["discount"] = new_model["dario"]["discount"]
+    new_model["baseline"]["stage_6_cac"] = new_model["dario"]["stage_6_cac"] * 0.8
     
     return new_model
 
@@ -216,66 +237,45 @@ def migrate_old_model(old_model: dict) -> dict:
 # FORMATTING HELPERS
 # =============================================================================
 def clamp(x, lo, hi):
-    """Clamp a value between lo and hi."""
     return max(lo, min(hi, float(x)))
 
 
 def money(x) -> str:
-    """Format as currency."""
-    if x != x:  # NaN check
+    if x != x:  # NaN
         return "—"
     return f"${x:,.0f}"
 
 
 def number(x) -> str:
-    """Format as number with commas."""
     if x != x:
         return "—"
     return f"{x:,.0f}"
 
 
 def pct(x) -> str:
-    """Format as percentage."""
     if x != x:
         return "—"
     return f"{x*100:,.1f}%"
 
 
 def roix(x) -> str:
-    """Format as ROI multiplier."""
     if x != x:
         return "—"
     return f"{x:,.2f}x"
 
 
-def delta_fmt(x, fmt_type="number") -> str:
-    """Format a delta value with +/- sign."""
+def delta_money(x) -> str:
     if x != x:
         return "—"
-    sign = "+" if x > 0 else ""
-    if fmt_type == "money":
-        return f"{sign}${x:,.0f}"
-    elif fmt_type == "pct":
-        return f"{sign}{x*100:,.1f}%"
-    else:
-        return f"{sign}{x:,.0f}"
+    sign = "+" if x >= 0 else ""
+    return f"{sign}${x:,.0f}"
 
 
 # =============================================================================
 # CORE DATA STRUCTURES
 # =============================================================================
 @dataclass(frozen=True)
-class StageInput:
-    """Input parameters for a single funnel stage."""
-    name: str
-    active: bool
-    ratio: float
-    cac: float
-
-
-@dataclass(frozen=True)
 class StageResult:
-    """Computed results for a single funnel stage."""
     name: str
     active: bool
     ratio_used: float
@@ -288,78 +288,61 @@ class StageResult:
 # =============================================================================
 # CORE COMPUTATION FUNCTIONS
 # =============================================================================
-def build_stage_inputs(scenario: dict, stage_names: List[str]) -> List[StageInput]:
+def compute_funnel(
+    stage_names: List[str],
+    ratios: List[float],
+    stage_active: List[bool],
+    stage_6_cac: float,
+    base_population: float
+) -> List[StageResult]:
     """
-    Build a list of StageInput objects from scenario data.
+    Calculate funnel progression.
     
-    Args:
-        scenario: Dictionary containing ratios, cac, stage_active
-        stage_names: List of stage names (from shared settings)
+    CAC LOGIC:
+    - Stages 1-5 (idx 0-4): No CAC applied
+    - Stage 6 (idx 5): CAC per patient creates the total CAC pool
+    - Stages 7-13 (idx 6-12): CAC per patient = pool / patients at that stage
     
-    Returns:
-        List of StageInput objects
-    """
-    stages = []
-    for idx, name in enumerate(stage_names):
-        stages.append(StageInput(
-            name=name,
-            active=bool(scenario["stage_active"][idx]),
-            ratio=float(scenario["ratios"][idx]) if idx > 0 else 1.0,
-            cac=float(scenario["cac"][idx]),
-        ))
-    return stages
-
-
-def compute_funnel(stages: List[StageInput], base_population: float) -> List[StageResult]:
-    """
-    Calculate funnel progression from base population through all stages.
-    
-    CAC Logic:
-    - Stages 1-5 (idx 0-4): No CAC applied (top-of-funnel awareness)
-    - Stage 6 (idx 5): CAC is entered per-patient, creates the CAC pool
-    - Stages 7+ (idx 6+): CAC per patient is calculated from the Stage 6 pool
-    
-    Args:
-        stages: List of StageInput objects
-        base_population: Starting patient count
-    
-    Returns:
-        List of StageResult objects with computed values
+    The cumulative CAC stays constant after Stage 6 - it's just redistributed
+    across fewer patients as they progress through the funnel.
     """
     results = []
     prev_patients = max(0.0, float(base_population))
-    total_cac_pool = 0.0
+    cac_pool = 0.0
 
-    for idx, s in enumerate(stages):
-        # Calculate patient count for this stage
+    for idx in range(NUM_STAGES):
+        name = stage_names[idx]
+        active = stage_active[idx]
+        
+        # Calculate patients
         if idx == 0:
             patients = prev_patients
             ratio_used = 1.0
         else:
-            ratio_used = 1.0 if not s.active else clamp(s.ratio, 0.0, 1.0)
+            ratio_used = clamp(ratios[idx], 0.0, 1.0) if active else 1.0
             patients = prev_patients * ratio_used
 
-        # Calculate CAC based on stage position
-        if idx < 5:
+        # Calculate CAC
+        if idx < CAC_POOL_STAGE_INDEX:
             # Stages 1-5: No CAC
             cac_pp = 0.0
             stage_cac = 0.0
             cumulative = 0.0
-        elif idx == 5:
-            # Stage 6: CAC per patient creates the pool
-            cac_pp = 0.0 if not s.active else max(0.0, float(s.cac))
+        elif idx == CAC_POOL_STAGE_INDEX:
+            # Stage 6: Creates the CAC pool
+            cac_pp = max(0.0, float(stage_6_cac)) if active else 0.0
             stage_cac = patients * cac_pp
-            total_cac_pool = stage_cac
-            cumulative = total_cac_pool
+            cac_pool = stage_cac
+            cumulative = cac_pool
         else:
             # Stages 7+: CAC distributed from pool
-            cumulative = total_cac_pool
-            cac_pp = (total_cac_pool / patients) if patients > 0 else 0.0
-            stage_cac = cac_pp * patients
+            cumulative = cac_pool
+            cac_pp = (cac_pool / patients) if patients > 0 else 0.0
+            stage_cac = cac_pool  # Total spend is the same, just per-patient changes
 
         results.append(StageResult(
-            name=s.name,
-            active=s.active,
+            name=name,
+            active=active,
             ratio_used=ratio_used,
             patients=patients,
             cac_per_patient=cac_pp,
@@ -377,49 +360,38 @@ def compute_financials(
     treatment_years: float,
     discount: float,
     funnel_cac_total: float,
-    platform_costs: float = 0.0
+    platform_costs: float
 ) -> dict:
     """
-    Calculate financial metrics for a scenario.
+    Calculate financial metrics.
     
     Formulas:
     - Gross Revenue = Treated Patients × ARPP × Treatment Years
     - Net Revenue = Gross Revenue × (1 - Discount)
     - Total Cost = Funnel CAC + Platform Costs
     - Net Profit = Net Revenue - Total Cost
-    - ROI = Net Revenue / Total Cost
-    
-    Args:
-        treated_patients: Number of patients completing the funnel
-        arpp: Annual Revenue Per Patient
-        treatment_years: Average years of treatment
-        discount: Gross-to-net discount rate (0.68 = 68% discount)
-        funnel_cac_total: Total customer acquisition cost from funnel
-        platform_costs: Additional platform/technology costs
-    
-    Returns:
-        Dictionary with all financial metrics
+    - Standalone ROI = Net Revenue / Total Cost (if cost > 0)
     """
     treated = max(0.0, float(treated_patients))
-    arpp = max(0.0, float(arpp))
+    arpp_val = max(0.0, float(arpp))
     years = max(0.0, float(treatment_years))
     disc = clamp(discount, 0.0, 1.0)
     funnel_cac = max(0.0, float(funnel_cac_total))
     platform = max(0.0, float(platform_costs))
 
-    # Revenue calculations
-    gross_revenue = treated * arpp * years
+    gross_revenue = treated * arpp_val * years
     net_revenue = gross_revenue * (1.0 - disc)
-    
-    # Cost calculations
     total_cost = funnel_cac + platform
-    
-    # Profit and ROI
     net_profit = net_revenue - total_cost
-    roi = (net_revenue / total_cost) if total_cost > 0 else float("nan")
+    
+    # Standalone ROI: Net Revenue / Total Cost
+    standalone_roi = (net_revenue / total_cost) if total_cost > 0 else float("nan")
     
     # Cost per treated patient
     cost_per_patient = (total_cost / treated) if treated > 0 else float("nan")
+    
+    # Net revenue per patient (useful for break-even)
+    net_rev_per_patient = (net_revenue / treated) if treated > 0 else 0.0
 
     return {
         "treated_patients": treated,
@@ -430,26 +402,24 @@ def compute_financials(
         "platform_costs_total": platform,
         "total_cost": total_cost,
         "net_profit": net_profit,
-        "roi": roi,
+        "standalone_roi": standalone_roi,
         "cost_per_patient": cost_per_patient,
+        "net_rev_per_patient": net_rev_per_patient,
     }
 
 
 def run_scenario(scenario: dict, stage_names: List[str], base_population: Optional[float] = None):
-    """
-    Run a complete scenario calculation.
-    
-    Args:
-        scenario: Scenario dictionary (baseline or dario)
-        stage_names: List of stage names
-        base_population: Override base population (if using shared)
-    
-    Returns:
-        Tuple of (funnel_results, financials)
-    """
-    stages = build_stage_inputs(scenario, stage_names)
+    """Run a complete scenario calculation."""
     pop = base_population if base_population is not None else float(scenario["base_population"])
-    funnel_results = compute_funnel(stages, pop)
+    
+    funnel_results = compute_funnel(
+        stage_names=stage_names,
+        ratios=scenario["ratios"],
+        stage_active=scenario["stage_active"],
+        stage_6_cac=scenario["stage_6_cac"],
+        base_population=pop,
+    )
+    
     platform_costs = sum(scenario.get("platform_costs", {}).values())
     
     financials = compute_financials(
@@ -466,41 +436,33 @@ def run_scenario(scenario: dict, stage_names: List[str], base_population: Option
 
 def compute_incremental_metrics(baseline_fin: dict, dario_fin: dict) -> dict:
     """
-    Calculate incremental/delta metrics between baseline and Dario scenarios.
+    Calculate incremental metrics between baseline and Dario.
     
-    Formulas:
-    - Incremental Treated Patients = Dario Patients - Baseline Patients
-    - Incremental Net Revenue = Dario Net Revenue - Baseline Net Revenue
+    Key metrics:
+    - Incremental Patients = Dario Patients - Baseline Patients
+    - Incremental Net Revenue = Dario Net Revenue - Baseline Net Revenue  
     - Incremental Cost = Dario Total Cost - Baseline Total Cost
-    - Incremental Net Profit = Dario Net Profit - Baseline Net Profit
-    - Incremental ROI (Revenue) = Incremental Net Revenue / Incremental Cost
-    - Incremental ROI (Profit) = Incremental Net Profit / Incremental Cost
-    - Cost per Incremental Patient = Incremental Cost / Incremental Patients
-    
-    Args:
-        baseline_fin: Financial metrics for baseline scenario
-        dario_fin: Financial metrics for Dario scenario
-    
-    Returns:
-        Dictionary with all incremental metrics
+    - Incremental Profit = Dario Net Profit - Baseline Net Profit
+    - Incremental ROI (Profit-based) = Incremental Profit / Incremental Cost
     """
-    # Incremental values
     incr_patients = dario_fin["treated_patients"] - baseline_fin["treated_patients"]
     incr_gross = dario_fin["gross_revenue"] - baseline_fin["gross_revenue"]
     incr_net_revenue = dario_fin["net_revenue"] - baseline_fin["net_revenue"]
     incr_cost = dario_fin["total_cost"] - baseline_fin["total_cost"]
     incr_profit = dario_fin["net_profit"] - baseline_fin["net_profit"]
     
-    # ROI calculations (guard against divide-by-zero and negative costs)
+    # Incremental ROI (Profit-based)
+    # Only meaningful when incremental cost > 0
     if incr_cost > 0:
-        incr_roi_revenue = incr_net_revenue / incr_cost
         incr_roi_profit = incr_profit / incr_cost
+    elif incr_cost < 0 and incr_profit > 0:
+        # Dario costs less AND generates more profit - infinite ROI conceptually
+        incr_roi_profit = float("inf")
     else:
-        incr_roi_revenue = float("nan")
         incr_roi_profit = float("nan")
     
     # Cost per incremental patient
-    if incr_patients > 0:
+    if incr_patients > 0 and incr_cost > 0:
         cost_per_incr_patient = incr_cost / incr_patients
     else:
         cost_per_incr_patient = float("nan")
@@ -511,7 +473,6 @@ def compute_incremental_metrics(baseline_fin: dict, dario_fin: dict) -> dict:
         "incremental_net_revenue": incr_net_revenue,
         "incremental_cost": incr_cost,
         "incremental_profit": incr_profit,
-        "incremental_roi_revenue": incr_roi_revenue,
         "incremental_roi_profit": incr_roi_profit,
         "cost_per_incremental_patient": cost_per_incr_patient,
     }
@@ -519,95 +480,77 @@ def compute_incremental_metrics(baseline_fin: dict, dario_fin: dict) -> dict:
 
 def compute_breakeven(dario_fin: dict, incr: dict) -> dict:
     """
-    Calculate break-even points for the Dario investment.
+    Calculate break-even analysis.
     
-    Formulas:
-    - Break-even Incremental Patients = Incremental Cost / Net Revenue per Patient (Dario)
-    - Net Revenue per Patient = ARPP × Treatment Years × (1 - Discount)
+    Break-even patients = Incremental Cost / Net Revenue per Patient (Dario)
     
-    Args:
-        dario_fin: Financial metrics for Dario scenario
-        incr: Incremental metrics
-    
-    Returns:
-        Dictionary with break-even calculations
+    This tells you how many incremental patients you need to cover the
+    incremental cost of the Dario investment.
     """
-    # Net revenue per treated patient in Dario scenario
-    if dario_fin["treated_patients"] > 0:
-        net_rev_per_patient = dario_fin["net_revenue"] / dario_fin["treated_patients"]
-    else:
-        net_rev_per_patient = 0.0
+    net_rev_per_patient = dario_fin["net_rev_per_patient"]
+    incr_cost = incr["incremental_cost"]
+    incr_patients = incr["incremental_patients"]
     
-    # Break-even incremental patients needed
-    if net_rev_per_patient > 0:
-        breakeven_patients = incr["incremental_cost"] / net_rev_per_patient
-    else:
-        breakeven_patients = float("nan")
+    # Handle edge cases
+    if incr_cost <= 0:
+        # Dario costs the same or less - no break-even needed
+        return {
+            "breakeven_patients": 0.0,
+            "patients_vs_breakeven": incr_patients,
+            "is_above_breakeven": True,
+            "breakeven_applicable": False,
+            "message": "Dario costs ≤ baseline - no break-even threshold needed",
+        }
     
-    # Current patients above/below break-even
-    patients_vs_breakeven = incr["incremental_patients"] - breakeven_patients if breakeven_patients == breakeven_patients else float("nan")
+    if net_rev_per_patient <= 0:
+        return {
+            "breakeven_patients": float("nan"),
+            "patients_vs_breakeven": float("nan"),
+            "is_above_breakeven": False,
+            "breakeven_applicable": False,
+            "message": "No revenue per patient - cannot calculate break-even",
+        }
+    
+    breakeven_patients = incr_cost / net_rev_per_patient
+    patients_vs_breakeven = incr_patients - breakeven_patients
+    is_above = patients_vs_breakeven >= 0
     
     return {
-        "net_revenue_per_patient": net_rev_per_patient,
-        "breakeven_incremental_patients": breakeven_patients,
+        "breakeven_patients": breakeven_patients,
         "patients_vs_breakeven": patients_vs_breakeven,
-        "is_above_breakeven": patients_vs_breakeven > 0 if patients_vs_breakeven == patients_vs_breakeven else False,
+        "is_above_breakeven": is_above,
+        "breakeven_applicable": True,
+        "message": None,
     }
 
 
-def compute_cac_sensitivity(
-    model: dict,
-    cac_min: float,
-    cac_max: float,
-    cac_step: float
-) -> List[dict]:
+def compute_cac_sensitivity(model: dict, cac_min: float, cac_max: float, cac_step: float) -> List[dict]:
     """
-    Run sensitivity analysis varying baseline CAC (Stage 6).
-    
-    Args:
-        model: Complete model dictionary
-        cac_min: Minimum CAC to test
-        cac_max: Maximum CAC to test
-        cac_step: Step size between CAC values
-    
-    Returns:
-        List of dictionaries with CAC value and resulting metrics
+    Run sensitivity analysis varying baseline Stage 6 CAC.
+    Shows how incremental metrics change as baseline CAC assumption varies.
     """
     results = []
     stage_names = model["shared"]["stage_names"]
     
-    # Get base population
-    if model["shared"]["use_shared_base_population"]:
-        base_pop = model["shared"]["shared_base_population"]
-    else:
-        base_pop = None
+    base_pop = model["shared"]["shared_base_population"] if model["shared"]["use_shared_base_population"] else None
     
-    # Dario scenario stays constant
+    # Dario stays constant
     _, dario_fin = run_scenario(model["dario"], stage_names, base_pop)
     
-    # Vary baseline CAC
     cac = cac_min
-    while cac <= cac_max:
-        # Create modified baseline scenario
+    while cac <= cac_max + 0.001:  # Small epsilon for float comparison
         baseline_mod = copy.deepcopy(model["baseline"])
-        baseline_mod["cac"][5] = cac  # Stage 6 CAC
+        baseline_mod["stage_6_cac"] = cac
         
-        # Run baseline with modified CAC
         _, baseline_fin = run_scenario(baseline_mod, stage_names, base_pop)
-        
-        # Calculate incremental metrics
         incr = compute_incremental_metrics(baseline_fin, dario_fin)
-        breakeven = compute_breakeven(dario_fin, incr)
         
         results.append({
             "baseline_cac": cac,
             "baseline_total_cost": baseline_fin["total_cost"],
-            "baseline_net_profit": baseline_fin["net_profit"],
             "incremental_cost": incr["incremental_cost"],
             "incremental_profit": incr["incremental_profit"],
-            "incremental_roi_revenue": incr["incremental_roi_revenue"],
-            "incremental_roi_profit": incr["incremental_roi_profit"],
-            "breakeven_patients": breakeven["breakeven_incremental_patients"],
+            "incremental_roi_profit": incr["incremental_roi_profit"] if incr["incremental_roi_profit"] != float("inf") else 999,
         })
         
         cac += cac_step
@@ -616,43 +559,20 @@ def compute_cac_sensitivity(
 
 
 def run_full_model(model: dict) -> dict:
-    """
-    Run complete model calculation including both scenarios and incremental metrics.
-    
-    Args:
-        model: Complete model dictionary with shared, baseline, and dario
-    
-    Returns:
-        Dictionary with all results
-    """
+    """Run complete model calculation."""
     stage_names = model["shared"]["stage_names"]
+    base_pop = model["shared"]["shared_base_population"] if model["shared"]["use_shared_base_population"] else None
     
-    # Determine base population
-    if model["shared"]["use_shared_base_population"]:
-        base_pop = model["shared"]["shared_base_population"]
-    else:
-        base_pop = None
-    
-    # Run both scenarios
     baseline_funnel, baseline_fin = run_scenario(model["baseline"], stage_names, base_pop)
     dario_funnel, dario_fin = run_scenario(model["dario"], stage_names, base_pop)
     
-    # Calculate incremental metrics
     incr = compute_incremental_metrics(baseline_fin, dario_fin)
-    
-    # Calculate break-even
     breakeven = compute_breakeven(dario_fin, incr)
     
-    # Run sensitivity if baseline is in sensitivity mode
     sensitivity = None
     if model["baseline"].get("cac_mode") == "sensitivity":
         sens_cfg = model["baseline"]["cac_sensitivity"]
-        sensitivity = compute_cac_sensitivity(
-            model,
-            sens_cfg["min"],
-            sens_cfg["max"],
-            sens_cfg["step"]
-        )
+        sensitivity = compute_cac_sensitivity(model, sens_cfg["min"], sens_cfg["max"], sens_cfg["step"])
     
     return {
         "baseline_funnel": baseline_funnel,
@@ -669,148 +589,101 @@ def run_full_model(model: dict) -> dict:
 # EXCEL EXPORT
 # =============================================================================
 def build_excel_report(model_name: str, results: dict, model: dict) -> bytes:
-    """
-    Build a comprehensive Excel report with multiple sheets.
-    
-    Sheets:
-    - Summary: Key metrics for both scenarios and incremental
-    - Baseline Funnel: Stage-by-stage baseline data
-    - Dario Funnel: Stage-by-stage Dario data
-    - Incremental: Detailed incremental metrics
-    - Sensitivity: CAC sensitivity analysis (if available)
-    """
+    """Build Excel report with multiple sheets."""
     wb = Workbook()
     header_fill = PatternFill("solid", fgColor="0F172A")
     header_font = Font(bold=True, color="FFFFFF")
-    bold_font = Font(bold=True)
     center = Alignment(horizontal="center", vertical="center")
-    left = Alignment(horizontal="left", vertical="center")
 
-    def style_header_row(ws, row=1):
+    def style_header(ws, row=1):
         for cell in ws[row]:
             cell.fill = header_fill
             cell.font = header_font
             cell.alignment = center
 
-    def set_col_widths(ws, widths):
-        for col_idx, w in widths.items():
-            ws.column_dimensions[get_column_letter(col_idx)].width = w
+    def set_widths(ws, widths):
+        for col, w in widths.items():
+            ws.column_dimensions[get_column_letter(col)].width = w
 
-    # ----- Summary Sheet -----
-    ws_sum = wb.active
-    ws_sum.title = "Summary"
-    ws_sum["A1"] = f"PharmaROI Intelligence — {model_name}"
-    ws_sum["A1"].font = Font(bold=True, size=14)
-    ws_sum.merge_cells("A1:D1")
-
-    # Headers
-    ws_sum["A3"] = "Metric"
-    ws_sum["B3"] = "Baseline"
-    ws_sum["C3"] = "Dario"
-    ws_sum["D3"] = "Incremental"
-    style_header_row(ws_sum, 3)
+    # Summary Sheet
+    ws = wb.active
+    ws.title = "Summary"
+    ws["A1"] = f"PharmaROI — {model_name}"
+    ws["A1"].font = Font(bold=True, size=14)
+    
+    ws["A3"], ws["B3"], ws["C3"], ws["D3"] = "Metric", "Baseline", "Dario", "Incremental"
+    style_header(ws, 3)
 
     baseline = results["baseline_fin"]
     dario = results["dario_fin"]
     incr = results["incremental"]
 
-    summary_rows = [
+    rows = [
         ("Treated Patients", baseline["treated_patients"], dario["treated_patients"], incr["incremental_patients"]),
         ("Gross Revenue", baseline["gross_revenue"], dario["gross_revenue"], incr["incremental_gross_revenue"]),
         ("Net Revenue", baseline["net_revenue"], dario["net_revenue"], incr["incremental_net_revenue"]),
         ("Total Cost", baseline["total_cost"], dario["total_cost"], incr["incremental_cost"]),
         ("Net Profit", baseline["net_profit"], dario["net_profit"], incr["incremental_profit"]),
-        ("ROI", baseline["roi"], dario["roi"], incr["incremental_roi_profit"]),
+        ("Standalone ROI", baseline["standalone_roi"], dario["standalone_roi"], incr["incremental_roi_profit"]),
     ]
 
-    for i, (label, b_val, d_val, i_val) in enumerate(summary_rows):
+    for i, (label, b, d, inc) in enumerate(rows):
         r = 4 + i
-        ws_sum[f"A{r}"] = label
-        ws_sum[f"B{r}"] = b_val if b_val == b_val else None
-        ws_sum[f"C{r}"] = d_val if d_val == d_val else None
-        ws_sum[f"D{r}"] = i_val if i_val == i_val else None
+        ws[f"A{r}"] = label
+        ws[f"B{r}"] = b if b == b else None
+        ws[f"C{r}"] = d if d == d else None
+        ws[f"D{r}"] = inc if inc == inc else None
 
-    set_col_widths(ws_sum, {1: 20, 2: 18, 3: 18, 4: 18})
+    set_widths(ws, {1: 20, 2: 18, 3: 18, 4: 18})
 
-    # ----- Baseline Funnel Sheet -----
-    ws_base = wb.create_sheet("Baseline Funnel")
-    headers = ["#", "Stage", "Ratio", "Patients", "CAC/pt", "Stage CAC", "Cumulative CAC"]
-    for c, h in enumerate(headers, start=1):
-        ws_base.cell(row=1, column=c, value=h)
-    style_header_row(ws_base, 1)
+    # Baseline Funnel
+    ws_b = wb.create_sheet("Baseline Funnel")
+    headers = ["#", "Stage", "Ratio", "Patients", "CAC/pt", "Cumulative CAC"]
+    for c, h in enumerate(headers, 1):
+        ws_b.cell(1, c, h)
+    style_header(ws_b, 1)
 
-    for r_idx, r in enumerate(results["baseline_funnel"], start=2):
-        ws_base.cell(row=r_idx, column=1, value=r_idx-1)
-        ws_base.cell(row=r_idx, column=2, value=r.name)
-        ws_base.cell(row=r_idx, column=3, value=r.ratio_used)
-        ws_base.cell(row=r_idx, column=4, value=r.patients)
-        ws_base.cell(row=r_idx, column=5, value=r.cac_per_patient)
-        ws_base.cell(row=r_idx, column=6, value=r.stage_cac)
-        ws_base.cell(row=r_idx, column=7, value=r.cumulative_cac)
+    for i, r in enumerate(results["baseline_funnel"], 2):
+        ws_b.cell(i, 1, i-1)
+        ws_b.cell(i, 2, r.name)
+        ws_b.cell(i, 3, r.ratio_used)
+        ws_b.cell(i, 4, r.patients)
+        ws_b.cell(i, 5, r.cac_per_patient)
+        ws_b.cell(i, 6, r.cumulative_cac)
 
-    set_col_widths(ws_base, {1: 5, 2: 45, 3: 10, 4: 15, 5: 12, 6: 15, 7: 18})
+    set_widths(ws_b, {1: 5, 2: 45, 3: 10, 4: 15, 5: 12, 6: 18})
 
-    # ----- Dario Funnel Sheet -----
-    ws_dario = wb.create_sheet("Dario Funnel")
-    for c, h in enumerate(headers, start=1):
-        ws_dario.cell(row=1, column=c, value=h)
-    style_header_row(ws_dario, 1)
+    # Dario Funnel
+    ws_d = wb.create_sheet("Dario Funnel")
+    for c, h in enumerate(headers, 1):
+        ws_d.cell(1, c, h)
+    style_header(ws_d, 1)
 
-    for r_idx, r in enumerate(results["dario_funnel"], start=2):
-        ws_dario.cell(row=r_idx, column=1, value=r_idx-1)
-        ws_dario.cell(row=r_idx, column=2, value=r.name)
-        ws_dario.cell(row=r_idx, column=3, value=r.ratio_used)
-        ws_dario.cell(row=r_idx, column=4, value=r.patients)
-        ws_dario.cell(row=r_idx, column=5, value=r.cac_per_patient)
-        ws_dario.cell(row=r_idx, column=6, value=r.stage_cac)
-        ws_dario.cell(row=r_idx, column=7, value=r.cumulative_cac)
+    for i, r in enumerate(results["dario_funnel"], 2):
+        ws_d.cell(i, 1, i-1)
+        ws_d.cell(i, 2, r.name)
+        ws_d.cell(i, 3, r.ratio_used)
+        ws_d.cell(i, 4, r.patients)
+        ws_d.cell(i, 5, r.cac_per_patient)
+        ws_d.cell(i, 6, r.cumulative_cac)
 
-    set_col_widths(ws_dario, {1: 5, 2: 45, 3: 10, 4: 15, 5: 12, 6: 15, 7: 18})
+    set_widths(ws_d, {1: 5, 2: 45, 3: 10, 4: 15, 5: 12, 6: 18})
 
-    # ----- Incremental Sheet -----
-    ws_incr = wb.create_sheet("Incremental")
-    ws_incr["A1"] = "Incremental Metrics"
-    ws_incr["A1"].font = Font(bold=True, size=12)
-
-    incr_rows = [
-        ("Incremental Treated Patients", incr["incremental_patients"]),
-        ("Incremental Gross Revenue", incr["incremental_gross_revenue"]),
-        ("Incremental Net Revenue", incr["incremental_net_revenue"]),
-        ("Incremental Cost", incr["incremental_cost"]),
-        ("Incremental Net Profit", incr["incremental_profit"]),
-        ("Incremental ROI (Revenue)", incr["incremental_roi_revenue"]),
-        ("Incremental ROI (Profit)", incr["incremental_roi_profit"]),
-        ("Cost per Incremental Patient", incr["cost_per_incremental_patient"]),
-        ("Break-even Incremental Patients", results["breakeven"]["breakeven_incremental_patients"]),
-    ]
-
-    ws_incr["A3"] = "Metric"
-    ws_incr["B3"] = "Value"
-    style_header_row(ws_incr, 3)
-
-    for i, (label, val) in enumerate(incr_rows):
-        r = 4 + i
-        ws_incr[f"A{r}"] = label
-        ws_incr[f"B{r}"] = val if val == val else None
-
-    set_col_widths(ws_incr, {1: 35, 2: 20})
-
-    # ----- Sensitivity Sheet (if available) -----
+    # Sensitivity (if available)
     if results["sensitivity"]:
-        ws_sens = wb.create_sheet("Sensitivity")
-        sens_headers = ["Baseline CAC", "Baseline Cost", "Incr Cost", "Incr Profit", "Incr ROI (Profit)"]
-        for c, h in enumerate(sens_headers, start=1):
-            ws_sens.cell(row=1, column=c, value=h)
-        style_header_row(ws_sens, 1)
+        ws_s = wb.create_sheet("Sensitivity")
+        sens_headers = ["Baseline CAC", "Incr Cost", "Incr Profit", "Incr ROI"]
+        for c, h in enumerate(sens_headers, 1):
+            ws_s.cell(1, c, h)
+        style_header(ws_s, 1)
 
-        for r_idx, row in enumerate(results["sensitivity"], start=2):
-            ws_sens.cell(row=r_idx, column=1, value=row["baseline_cac"])
-            ws_sens.cell(row=r_idx, column=2, value=row["baseline_total_cost"])
-            ws_sens.cell(row=r_idx, column=3, value=row["incremental_cost"])
-            ws_sens.cell(row=r_idx, column=4, value=row["incremental_profit"])
-            ws_sens.cell(row=r_idx, column=5, value=row["incremental_roi_profit"])
+        for i, row in enumerate(results["sensitivity"], 2):
+            ws_s.cell(i, 1, row["baseline_cac"])
+            ws_s.cell(i, 2, row["incremental_cost"])
+            ws_s.cell(i, 3, row["incremental_profit"])
+            ws_s.cell(i, 4, row["incremental_roi_profit"])
 
-        set_col_widths(ws_sens, {1: 15, 2: 18, 3: 15, 4: 15, 5: 18})
+        set_widths(ws_s, {1: 15, 2: 15, 3: 15, 4: 15})
 
     buffer = io.BytesIO()
     wb.save(buffer)
@@ -819,42 +692,35 @@ def build_excel_report(model_name: str, results: dict, model: dict) -> bytes:
 
 
 # =============================================================================
-# SESSION STATE INITIALIZATION
+# SESSION STATE
 # =============================================================================
 def init_session():
-    """Initialize session state with default values and migrate old models."""
     if "models" not in st.session_state:
         st.session_state["models"] = [get_default_model()]
         st.session_state["model_names"] = ["Model 1"]
         st.session_state["active_model_idx"] = 0
     else:
-        # Migrate any old-format models
+        # Migrate old models
         for i, model in enumerate(st.session_state["models"]):
-            st.session_state["models"][i] = migrate_old_model(model)
-
+            st.session_state["models"][i] = migrate_model(model)
 
 init_session()
 
 
 # =============================================================================
-# PAGE CONFIGURATION
+# PAGE CONFIG
 # =============================================================================
-st.set_page_config(
-    page_title="PharmaROI V4 — Baseline vs Dario",
-    page_icon="📈",
-    layout="wide"
-)
-
+st.set_page_config(page_title="PharmaROI V4", page_icon="📈", layout="wide")
 st.title("PharmaROI Intelligence — V4")
-st.caption("Compare Baseline (without Dario) vs Dario-Enabled scenarios and calculate incremental ROI.")
+st.caption("Compare Baseline vs Dario-Enabled scenarios and calculate incremental ROI")
 
 
 # =============================================================================
 # MODEL MANAGEMENT BAR
 # =============================================================================
-mgmt_col1, mgmt_col2, mgmt_col3, mgmt_col4 = st.columns([2, 2, 2, 4])
+col1, col2, col3, col4 = st.columns([2, 2, 2, 4])
 
-with mgmt_col1:
+with col1:
     if st.button("Add New Model", use_container_width=True):
         n = len(st.session_state["models"]) + 1
         st.session_state["models"].append(get_default_model())
@@ -862,64 +728,60 @@ with mgmt_col1:
         st.session_state["active_model_idx"] = len(st.session_state["models"]) - 1
         st.rerun()
 
-with mgmt_col2:
-    copy_options = st.session_state["model_names"]
-    copy_source = st.selectbox(
+with col2:
+    copy_idx = st.selectbox(
         "Copy from:",
-        options=range(len(copy_options)),
-        format_func=lambda i: copy_options[i],
+        range(len(st.session_state["model_names"])),
+        format_func=lambda i: st.session_state["model_names"][i],
         index=st.session_state["active_model_idx"],
-        key="copy_source_select",
+        key="copy_source",
         label_visibility="collapsed",
     )
-    if st.button("Copy This Model", use_container_width=True):
-        new_state = copy.deepcopy(st.session_state["models"][copy_source])
-        new_name = st.session_state["model_names"][copy_source] + " (copy)"
-        st.session_state["models"].append(new_state)
+    if st.button("Copy Model", use_container_width=True):
+        new_model = copy.deepcopy(st.session_state["models"][copy_idx])
+        new_name = st.session_state["model_names"][copy_idx] + " (copy)"
+        st.session_state["models"].append(new_model)
         st.session_state["model_names"].append(new_name)
         st.session_state["active_model_idx"] = len(st.session_state["models"]) - 1
         st.rerun()
 
-with mgmt_col3:
+with col3:
     can_delete = len(st.session_state["models"]) > 1
     if "confirm_delete" not in st.session_state:
         st.session_state["confirm_delete"] = False
 
     if not st.session_state["confirm_delete"]:
-        if st.button("Delete Current", use_container_width=True, disabled=not can_delete):
+        if st.button("Delete Model", use_container_width=True, disabled=not can_delete):
             st.session_state["confirm_delete"] = True
             st.rerun()
     else:
-        idx = st.session_state["active_model_idx"]
-        st.warning(f"Delete '{st.session_state['model_names'][idx]}'?")
-        confirm_cols = st.columns(2)
-        with confirm_cols[0]:
-            if st.button("Yes, Delete", use_container_width=True, type="primary"):
-                st.session_state["models"].pop(idx)
-                st.session_state["model_names"].pop(idx)
-                st.session_state["active_model_idx"] = max(0, idx - 1)
-                st.session_state["confirm_delete"] = False
-                st.rerun()
-        with confirm_cols[1]:
-            if st.button("Cancel", use_container_width=True):
-                st.session_state["confirm_delete"] = False
-                st.rerun()
+        st.warning(f"Delete '{st.session_state['model_names'][st.session_state['active_model_idx']]}'?")
+        c1, c2 = st.columns(2)
+        if c1.button("Yes", use_container_width=True):
+            idx = st.session_state["active_model_idx"]
+            st.session_state["models"].pop(idx)
+            st.session_state["model_names"].pop(idx)
+            st.session_state["active_model_idx"] = max(0, idx - 1)
+            st.session_state["confirm_delete"] = False
+            st.rerun()
+        if c2.button("No", use_container_width=True):
+            st.session_state["confirm_delete"] = False
+            st.rerun()
 
-with mgmt_col4:
+with col4:
     idx = st.session_state["active_model_idx"]
     new_name = st.text_input(
-        "Rename current model:",
-        value=st.session_state["model_names"][idx],
-        key=f"rename_model_{idx}",
+        "Model name:",
+        st.session_state["model_names"][idx],
+        key=f"rename_{idx}",
         label_visibility="collapsed",
-        placeholder="Rename current model…",
     )
     if new_name != st.session_state["model_names"][idx]:
         st.session_state["model_names"][idx] = new_name
 
 
 # =============================================================================
-# TABS: ONE PER MODEL + COMPARISON
+# TABS
 # =============================================================================
 tab_labels = st.session_state["model_names"] + ["Comparison"]
 tabs = st.tabs(tab_labels)
@@ -932,532 +794,324 @@ for model_idx, model_tab in enumerate(tabs[:-1]):
     with model_tab:
         model = st.session_state["models"][model_idx]
         model_name = st.session_state["model_names"][model_idx]
-        tab_color = TAB_PALETTE[model_idx % len(TAB_PALETTE)]
-
-        # Update active model index when this tab is viewed
         st.session_state["active_model_idx"] = model_idx
 
-        # =====================================================================
-        # SHARED SETTINGS
-        # =====================================================================
-        with st.expander("Shared Model Settings", expanded=False):
-            st.markdown("**Base Population**")
+        # ----- SHARED SETTINGS -----
+        with st.expander("Shared Settings", expanded=False):
             model["shared"]["use_shared_base_population"] = st.checkbox(
                 "Use same base population for both scenarios",
-                value=model["shared"]["use_shared_base_population"],
+                model["shared"]["use_shared_base_population"],
                 key=f"shared_pop_toggle_{model_idx}",
             )
 
             if model["shared"]["use_shared_base_population"]:
                 model["shared"]["shared_base_population"] = st.number_input(
-                    "Shared Base Population (TAM)",
-                    min_value=0,
-                    step=100_000,
+                    "Base Population (TAM)",
+                    min_value=0, step=100_000,
                     value=int(model["shared"]["shared_base_population"]),
                     key=f"shared_pop_{model_idx}",
                 )
 
-            st.markdown("**Stage Names**")
-            with st.expander("Customize Stage Names"):
+            with st.expander("Stage Names"):
                 for sidx in range(NUM_STAGES):
                     model["shared"]["stage_names"][sidx] = st.text_input(
                         f"Stage {sidx+1}:",
-                        value=model["shared"]["stage_names"][sidx],
-                        key=f"stage_name_{model_idx}_{sidx}",
+                        model["shared"]["stage_names"][sidx],
+                        key=f"sname_{model_idx}_{sidx}",
                     )
 
-            # Reset buttons
-            st.markdown("---")
-            reset_col1, reset_col2 = st.columns(2)
-            with reset_col1:
-                if st.button("Reset to Defaults", key=f"reset_default_{model_idx}"):
-                    st.session_state["models"][model_idx] = get_default_model()
-                    st.rerun()
-            with reset_col2:
-                if st.button("Reset to Zero", key=f"reset_zero_{model_idx}"):
-                    st.session_state["models"][model_idx] = get_zero_model()
-                    st.rerun()
+            c1, c2 = st.columns(2)
+            if c1.button("Reset to Defaults", key=f"reset_def_{model_idx}"):
+                st.session_state["models"][model_idx] = get_default_model()
+                st.rerun()
+            if c2.button("Reset to Zero", key=f"reset_zero_{model_idx}"):
+                st.session_state["models"][model_idx] = get_zero_model()
+                st.rerun()
 
-        # =====================================================================
-        # BASELINE SCENARIO
-        # =====================================================================
+        stage_names = model["shared"]["stage_names"]
+
+        # ----- BASELINE SCENARIO -----
         st.markdown("---")
         st.subheader("Baseline Scenario (Without Dario)")
-        st.caption("Configure the current state / status quo assumptions")
-
+        
         baseline = model["baseline"]
 
-        with st.expander("Baseline Settings", expanded=True):
-            # Base population (if not shared)
+        with st.expander("Baseline Configuration", expanded=True):
             if not model["shared"]["use_shared_base_population"]:
                 baseline["base_population"] = st.number_input(
-                    "Baseline Base Population",
-                    min_value=0,
-                    step=100_000,
+                    "Base Population",
+                    min_value=0, step=100_000,
                     value=int(baseline["base_population"]),
-                    key=f"baseline_pop_{model_idx}",
+                    key=f"b_pop_{model_idx}",
                 )
 
-            # Revenue settings
             st.markdown("**Revenue Assumptions**")
-            b_col1, b_col2, b_col3 = st.columns(3)
-            with b_col1:
-                baseline["arpp"] = st.number_input(
-                    "ARPP ($/year)",
-                    min_value=0.0,
-                    step=1000.0,
-                    value=float(baseline["arpp"]),
-                    key=f"baseline_arpp_{model_idx}",
-                )
-            with b_col2:
-                baseline["treatment_years"] = st.slider(
-                    "Treatment Years",
-                    min_value=0.1,
-                    max_value=5.0,
-                    step=0.1,
-                    value=float(baseline["treatment_years"]),
-                    key=f"baseline_years_{model_idx}",
-                )
-            with b_col3:
-                baseline["discount"] = st.slider(
-                    "Discount (Gross→Net)",
-                    min_value=0.0,
-                    max_value=1.0,
-                    step=0.01,
-                    value=float(baseline["discount"]),
-                    key=f"baseline_discount_{model_idx}",
-                )
+            bc1, bc2, bc3 = st.columns(3)
+            baseline["arpp"] = bc1.number_input("ARPP ($/year)", min_value=0.0, step=1000.0, value=float(baseline["arpp"]), key=f"b_arpp_{model_idx}")
+            baseline["treatment_years"] = bc2.slider("Treatment Years", 0.1, 5.0, float(baseline["treatment_years"]), 0.1, key=f"b_years_{model_idx}")
+            baseline["discount"] = bc3.slider("Discount (Gross→Net)", 0.0, 1.0, float(baseline["discount"]), 0.01, key=f"b_disc_{model_idx}")
 
-            # CAC Mode
-            st.markdown("**CAC Configuration**")
+            st.markdown("**Stage 6 CAC (CAC Pool Driver)**")
+            st.caption("This is the only CAC input - it creates the total acquisition cost pool at Stage 6. Stages 7-13 inherit this cost distributed across remaining patients.")
+            
             baseline["cac_mode"] = st.radio(
-                "Baseline CAC Input Mode:",
-                options=["direct", "sensitivity"],
-                format_func=lambda x: "Direct Input" if x == "direct" else "Sensitivity Analysis",
+                "CAC Input Mode:",
+                ["direct", "sensitivity"],
+                format_func=lambda x: "Direct Input" if x == "direct" else "Sensitivity Range",
                 index=0 if baseline["cac_mode"] == "direct" else 1,
-                key=f"baseline_cac_mode_{model_idx}",
+                key=f"b_cac_mode_{model_idx}",
                 horizontal=True,
             )
 
             if baseline["cac_mode"] == "direct":
-                # Direct CAC input for Stage 6
-                baseline["cac"][5] = st.number_input(
-                    "Stage 6 CAC ($ per patient)",
-                    min_value=0.0,
-                    step=1.0,
-                    value=float(baseline["cac"][5]),
-                    key=f"baseline_cac6_{model_idx}",
-                    help="Customer acquisition cost at Stage 6 (Activation)",
+                baseline["stage_6_cac"] = st.number_input(
+                    "Stage 6 CAC ($ per patient at activation)",
+                    min_value=0.0, step=1.0,
+                    value=float(baseline["stage_6_cac"]),
+                    key=f"b_cac6_{model_idx}",
                 )
             else:
-                # Sensitivity range
-                st.markdown("**Sensitivity Range (Stage 6 CAC)**")
-                sens_col1, sens_col2, sens_col3, sens_col4 = st.columns(4)
-                with sens_col1:
-                    baseline["cac_sensitivity"]["min"] = st.number_input(
-                        "Min CAC",
-                        min_value=0.0,
-                        step=1.0,
-                        value=float(baseline["cac_sensitivity"]["min"]),
-                        key=f"baseline_sens_min_{model_idx}",
-                    )
-                with sens_col2:
-                    baseline["cac_sensitivity"]["max"] = st.number_input(
-                        "Max CAC",
-                        min_value=0.0,
-                        step=1.0,
-                        value=float(baseline["cac_sensitivity"]["max"]),
-                        key=f"baseline_sens_max_{model_idx}",
-                    )
-                with sens_col3:
-                    baseline["cac_sensitivity"]["step"] = st.number_input(
-                        "Step",
-                        min_value=0.1,
-                        step=0.5,
-                        value=float(baseline["cac_sensitivity"]["step"]),
-                        key=f"baseline_sens_step_{model_idx}",
-                    )
-                with sens_col4:
-                    baseline["cac_sensitivity"]["base"] = st.number_input(
-                        "Base Case",
-                        min_value=0.0,
-                        step=1.0,
-                        value=float(baseline["cac_sensitivity"]["base"]),
-                        key=f"baseline_sens_base_{model_idx}",
-                    )
-                # Use base case for direct calculations
-                baseline["cac"][5] = baseline["cac_sensitivity"]["base"]
+                sc1, sc2, sc3, sc4 = st.columns(4)
+                baseline["cac_sensitivity"]["min"] = sc1.number_input("Min", 0.0, step=1.0, value=float(baseline["cac_sensitivity"]["min"]), key=f"b_sens_min_{model_idx}")
+                baseline["cac_sensitivity"]["max"] = sc2.number_input("Max", 0.0, step=1.0, value=float(baseline["cac_sensitivity"]["max"]), key=f"b_sens_max_{model_idx}")
+                baseline["cac_sensitivity"]["step"] = sc3.number_input("Step", 0.1, step=0.5, value=float(baseline["cac_sensitivity"]["step"]), key=f"b_sens_step_{model_idx}")
+                baseline["cac_sensitivity"]["base"] = sc4.number_input("Base Case", 0.0, step=1.0, value=float(baseline["cac_sensitivity"]["base"]), key=f"b_sens_base_{model_idx}")
+                baseline["stage_6_cac"] = baseline["cac_sensitivity"]["base"]
 
-            # Funnel ratios
             st.markdown("**Funnel Conversion Rates**")
-            with st.expander("Baseline Stage Ratios"):
-                for sidx in range(1, NUM_STAGES):  # Skip stage 1 (always 1.0)
+            with st.expander("Stage Ratios (Baseline)"):
+                for sidx in range(1, NUM_STAGES):
                     baseline["ratios"][sidx] = st.slider(
-                        f"Stage {sidx+1}: {model['shared']['stage_names'][sidx][:40]}",
-                        min_value=0.0,
-                        max_value=1.0,
-                        step=0.01,
-                        value=float(baseline["ratios"][sidx]),
-                        key=f"baseline_ratio_{model_idx}_{sidx}",
+                        f"Stage {sidx+1}: {stage_names[sidx][:50]}",
+                        0.0, 1.0, float(baseline["ratios"][sidx]), 0.01,
+                        key=f"b_ratio_{model_idx}_{sidx}",
                     )
 
-        # =====================================================================
-        # DARIO SCENARIO
-        # =====================================================================
+            st.markdown("**Platform Costs (Baseline)**")
+            st.caption("Typically $0 for baseline (no Dario platform)")
+            pc_b = baseline["platform_costs"]
+            pbc1, pbc2, pbc3 = st.columns(3)
+            pc_b["config_costs"] = pbc1.number_input("Config Costs", 0.0, step=10000.0, value=float(pc_b["config_costs"]), key=f"b_pc1_{model_idx}")
+            pc_b["subscription_costs"] = pbc2.number_input("Subscription", 0.0, step=10000.0, value=float(pc_b["subscription_costs"]), key=f"b_pc2_{model_idx}")
+            pc_b["maintenance_costs"] = pbc3.number_input("Maintenance", 0.0, step=10000.0, value=float(pc_b["maintenance_costs"]), key=f"b_pc3_{model_idx}")
+
+        # ----- DARIO SCENARIO -----
         st.markdown("---")
         st.subheader("Dario-Enabled Scenario")
-        st.caption("Configure the Dario-enabled assumptions (expected improvements)")
-
+        
         dario = model["dario"]
 
-        with st.expander("Dario Settings", expanded=True):
-            # Base population (if not shared)
+        with st.expander("Dario Configuration", expanded=True):
             if not model["shared"]["use_shared_base_population"]:
                 dario["base_population"] = st.number_input(
-                    "Dario Base Population",
-                    min_value=0,
-                    step=100_000,
+                    "Base Population",
+                    min_value=0, step=100_000,
                     value=int(dario["base_population"]),
-                    key=f"dario_pop_{model_idx}",
+                    key=f"d_pop_{model_idx}",
                 )
 
-            # Revenue settings
             st.markdown("**Revenue Assumptions**")
-            d_col1, d_col2, d_col3 = st.columns(3)
-            with d_col1:
-                dario["arpp"] = st.number_input(
-                    "ARPP ($/year)",
-                    min_value=0.0,
-                    step=1000.0,
-                    value=float(dario["arpp"]),
-                    key=f"dario_arpp_{model_idx}",
-                )
-            with d_col2:
-                dario["treatment_years"] = st.slider(
-                    "Treatment Years",
-                    min_value=0.1,
-                    max_value=5.0,
-                    step=0.1,
-                    value=float(dario["treatment_years"]),
-                    key=f"dario_years_{model_idx}",
-                )
-            with d_col3:
-                dario["discount"] = st.slider(
-                    "Discount (Gross→Net)",
-                    min_value=0.0,
-                    max_value=1.0,
-                    step=0.01,
-                    value=float(dario["discount"]),
-                    key=f"dario_discount_{model_idx}",
-                )
+            dc1, dc2, dc3 = st.columns(3)
+            dario["arpp"] = dc1.number_input("ARPP ($/year)", min_value=0.0, step=1000.0, value=float(dario["arpp"]), key=f"d_arpp_{model_idx}")
+            dario["treatment_years"] = dc2.slider("Treatment Years", 0.1, 5.0, float(dario["treatment_years"]), 0.1, key=f"d_years_{model_idx}")
+            dario["discount"] = dc3.slider("Discount (Gross→Net)", 0.0, 1.0, float(dario["discount"]), 0.01, key=f"d_disc_{model_idx}")
 
-            # Dario CAC (Stage 6)
-            st.markdown("**CAC Configuration**")
-            dario["cac"][5] = st.number_input(
-                "Stage 6 CAC ($ per patient)",
-                min_value=0.0,
-                step=1.0,
-                value=float(dario["cac"][5]),
-                key=f"dario_cac6_{model_idx}",
-                help="Customer acquisition cost at Stage 6 with Dario",
+            st.markdown("**Stage 6 CAC (CAC Pool Driver)**")
+            dario["stage_6_cac"] = st.number_input(
+                "Stage 6 CAC ($ per patient at activation)",
+                min_value=0.0, step=1.0,
+                value=float(dario["stage_6_cac"]),
+                key=f"d_cac6_{model_idx}",
             )
 
-            # Platform costs
-            st.markdown("**Platform Costs**")
-            pc = dario["platform_costs"]
-            pc_col1, pc_col2 = st.columns(2)
-            with pc_col1:
-                pc["dario_connect_config"] = st.number_input(
-                    "Dario Connect Configuration",
-                    min_value=0.0,
-                    step=10000.0,
-                    value=float(pc["dario_connect_config"]),
-                    key=f"dario_pc1_{model_idx}",
-                )
-                pc["dario_care_config"] = st.number_input(
-                    "Dario Care Configuration",
-                    min_value=0.0,
-                    step=10000.0,
-                    value=float(pc["dario_care_config"]),
-                    key=f"dario_pc2_{model_idx}",
-                )
-                pc["sub_dario_connect"] = st.number_input(
-                    "Subscription — Dario Connect",
-                    min_value=0.0,
-                    step=10000.0,
-                    value=float(pc["sub_dario_connect"]),
-                    key=f"dario_pc3_{model_idx}",
-                )
-            with pc_col2:
-                pc["sub_dario_care"] = st.number_input(
-                    "Subscription — Dario Care",
-                    min_value=0.0,
-                    step=10000.0,
-                    value=float(pc["sub_dario_care"]),
-                    key=f"dario_pc4_{model_idx}",
-                )
-                pc["maintenance_support"] = st.number_input(
-                    "Maintenance & Support",
-                    min_value=0.0,
-                    step=10000.0,
-                    value=float(pc["maintenance_support"]),
-                    key=f"dario_pc5_{model_idx}",
-                )
-            st.caption(f"**Total Platform Costs:** {money(sum(pc.values()))}")
-
-            # Funnel ratios
             st.markdown("**Funnel Conversion Rates**")
-            with st.expander("Dario Stage Ratios"):
+            with st.expander("Stage Ratios (Dario)"):
                 for sidx in range(1, NUM_STAGES):
                     dario["ratios"][sidx] = st.slider(
-                        f"Stage {sidx+1}: {model['shared']['stage_names'][sidx][:40]}",
-                        min_value=0.0,
-                        max_value=1.0,
-                        step=0.01,
-                        value=float(dario["ratios"][sidx]),
-                        key=f"dario_ratio_{model_idx}_{sidx}",
+                        f"Stage {sidx+1}: {stage_names[sidx][:50]}",
+                        0.0, 1.0, float(dario["ratios"][sidx]), 0.01,
+                        key=f"d_ratio_{model_idx}_{sidx}",
                     )
 
-        # =====================================================================
-        # RUN CALCULATIONS
-        # =====================================================================
-        results = run_full_model(model)
-        baseline_fin = results["baseline_fin"]
-        dario_fin = results["dario_fin"]
-        incr = results["incremental"]
-        breakeven = results["breakeven"]
+            st.markdown("**Platform Costs (Dario)**")
+            pc_d = dario["platform_costs"]
+            pdc1, pdc2, pdc3 = st.columns(3)
+            pc_d["config_costs"] = pdc1.number_input("Config Costs", 0.0, step=10000.0, value=float(pc_d["config_costs"]), key=f"d_pc1_{model_idx}")
+            pc_d["subscription_costs"] = pdc2.number_input("Subscription", 0.0, step=10000.0, value=float(pc_d["subscription_costs"]), key=f"d_pc2_{model_idx}")
+            pc_d["maintenance_costs"] = pdc3.number_input("Maintenance", 0.0, step=10000.0, value=float(pc_d["maintenance_costs"]), key=f"d_pc3_{model_idx}")
+            st.caption(f"**Total Platform Costs:** {money(sum(pc_d.values()))}")
 
-        # =====================================================================
-        # KPI SUMMARY CARDS
-        # =====================================================================
+        # ----- RUN CALCULATIONS -----
+        results = run_full_model(model)
+        b_fin = results["baseline_fin"]
+        d_fin = results["dario_fin"]
+        incr = results["incremental"]
+        be = results["breakeven"]
+
+        # ----- RESULTS SUMMARY -----
         st.markdown("---")
         st.subheader("Results Summary")
 
-        # Row 1: Treated Patients
-        st.markdown("**Treated Patients**")
-        kpi_col1, kpi_col2, kpi_col3 = st.columns(3)
-        with kpi_col1:
-            st.metric("Baseline", number(baseline_fin["treated_patients"]))
-        with kpi_col2:
-            st.metric("Dario", number(dario_fin["treated_patients"]))
-        with kpi_col3:
-            st.metric(
-                "Incremental",
-                number(incr["incremental_patients"]),
-                delta=f"{incr['incremental_patients']:+,.0f}" if incr["incremental_patients"] != 0 else None,
-            )
+        # KPIs in a cleaner grid
+        st.markdown("##### Treated Patients")
+        k1, k2, k3 = st.columns(3)
+        k1.metric("Baseline", number(b_fin["treated_patients"]))
+        k2.metric("Dario", number(d_fin["treated_patients"]))
+        k3.metric("Incremental", number(incr["incremental_patients"]), 
+                  delta=f"{incr['incremental_patients']:+,.0f}" if incr["incremental_patients"] != 0 else None)
 
-        # Row 2: Net Revenue
-        st.markdown("**Net Revenue**")
-        kpi_col4, kpi_col5, kpi_col6 = st.columns(3)
-        with kpi_col4:
-            st.metric("Baseline", money(baseline_fin["net_revenue"]))
-        with kpi_col5:
-            st.metric("Dario", money(dario_fin["net_revenue"]))
-        with kpi_col6:
-            st.metric(
-                "Incremental",
-                money(incr["incremental_net_revenue"]),
-                delta=delta_fmt(incr["incremental_net_revenue"], "money") if incr["incremental_net_revenue"] != 0 else None,
-            )
+        st.markdown("##### Net Revenue")
+        k4, k5, k6 = st.columns(3)
+        k4.metric("Baseline", money(b_fin["net_revenue"]))
+        k5.metric("Dario", money(d_fin["net_revenue"]))
+        k6.metric("Incremental", money(incr["incremental_net_revenue"]),
+                  delta=delta_money(incr["incremental_net_revenue"]) if incr["incremental_net_revenue"] != 0 else None)
 
-        # Row 3: Total Cost
-        st.markdown("**Total Cost**")
-        kpi_col7, kpi_col8, kpi_col9 = st.columns(3)
-        with kpi_col7:
-            st.metric("Baseline", money(baseline_fin["total_cost"]))
-        with kpi_col8:
-            st.metric("Dario", money(dario_fin["total_cost"]))
-        with kpi_col9:
-            st.metric(
-                "Incremental",
-                money(incr["incremental_cost"]),
-                delta=delta_fmt(incr["incremental_cost"], "money") if incr["incremental_cost"] != 0 else None,
-            )
+        st.markdown("##### Total Cost")
+        k7, k8, k9 = st.columns(3)
+        k7.metric("Baseline", money(b_fin["total_cost"]))
+        k8.metric("Dario", money(d_fin["total_cost"]))
+        k9.metric("Incremental", money(incr["incremental_cost"]),
+                  delta=delta_money(incr["incremental_cost"]) if incr["incremental_cost"] != 0 else None)
 
-        # Row 4: Net Profit & ROI
-        st.markdown("**Profitability**")
-        kpi_col10, kpi_col11, kpi_col12, kpi_col13 = st.columns(4)
-        with kpi_col10:
-            st.metric("Baseline Net Profit", money(baseline_fin["net_profit"]))
-        with kpi_col11:
-            st.metric("Dario Net Profit", money(dario_fin["net_profit"]))
-        with kpi_col12:
-            st.metric("Incremental Profit", money(incr["incremental_profit"]))
-        with kpi_col13:
-            st.metric("Incremental ROI", roix(incr["incremental_roi_profit"]))
+        st.markdown("##### Profitability")
+        k10, k11, k12 = st.columns(3)
+        k10.metric("Baseline Net Profit", money(b_fin["net_profit"]))
+        k11.metric("Dario Net Profit", money(d_fin["net_profit"]))
+        k12.metric("Incremental Profit", money(incr["incremental_profit"]))
 
-        # Row 5: Break-even
-        st.markdown("**Break-even Analysis**")
-        be_col1, be_col2, be_col3 = st.columns(3)
-        with be_col1:
-            st.metric("Break-even Patients Needed", number(breakeven["breakeven_incremental_patients"]))
-        with be_col2:
-            st.metric("Actual Incremental Patients", number(incr["incremental_patients"]))
-        with be_col3:
-            if breakeven["is_above_breakeven"]:
-                st.success(f"Above break-even by {number(breakeven['patients_vs_breakeven'])} patients")
+        st.markdown("##### ROI Metrics")
+        k13, k14, k15 = st.columns(3)
+        k13.metric("Baseline Standalone ROI", roix(b_fin["standalone_roi"]), help="Net Revenue / Total Cost")
+        k14.metric("Dario Standalone ROI", roix(d_fin["standalone_roi"]), help="Net Revenue / Total Cost")
+        roi_display = roix(incr["incremental_roi_profit"]) if incr["incremental_roi_profit"] != float("inf") else "∞ (cost savings)"
+        k15.metric("Incremental ROI (Profit)", roi_display, help="Incremental Profit / Incremental Cost")
+
+        st.markdown("##### Break-even Analysis")
+        if be["breakeven_applicable"]:
+            be1, be2, be3 = st.columns(3)
+            be1.metric("Break-even Patients Needed", number(be["breakeven_patients"]))
+            be2.metric("Actual Incremental Patients", number(incr["incremental_patients"]))
+            if be["is_above_breakeven"]:
+                be3.success(f"Above break-even by {number(be['patients_vs_breakeven'])} patients")
             else:
-                st.warning(f"Below break-even by {number(abs(breakeven['patients_vs_breakeven']))} patients")
+                be3.warning(f"Below break-even by {number(abs(be['patients_vs_breakeven']))} patients")
+        else:
+            st.info(be["message"])
 
-        # =====================================================================
-        # FUNNEL TABLES
-        # =====================================================================
+        # ----- FUNNEL TABLES -----
         st.markdown("---")
-        st.subheader("Funnel Comparison")
+        st.subheader("Funnel Details")
 
         if pd is not None:
-            funnel_tab1, funnel_tab2 = st.tabs(["Baseline Funnel", "Dario Funnel"])
+            tab_b, tab_d = st.tabs(["Baseline Funnel", "Dario Funnel"])
 
-            with funnel_tab1:
-                baseline_rows = []
-                for ridx, r in enumerate(results["baseline_funnel"]):
-                    baseline_rows.append({
-                        "#": ridx + 1,
-                        "Stage": r.name,
-                        "Ratio": pct(r.ratio_used) if ridx > 0 else "—",
-                        "Patients": number(r.patients),
-                        "CAC/pt": money(r.cac_per_patient),
-                        "Cumulative CAC": money(r.cumulative_cac),
-                    })
-                st.dataframe(pd.DataFrame(baseline_rows), use_container_width=True, hide_index=True)
+            with tab_b:
+                rows = [{
+                    "#": i+1,
+                    "Stage": r.name,
+                    "Ratio": pct(r.ratio_used) if i > 0 else "—",
+                    "Patients": number(r.patients),
+                    "CAC/Patient": money(r.cac_per_patient),
+                    "Cumulative CAC": money(r.cumulative_cac),
+                } for i, r in enumerate(results["baseline_funnel"])]
+                st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
 
-            with funnel_tab2:
-                dario_rows = []
-                for ridx, r in enumerate(results["dario_funnel"]):
-                    dario_rows.append({
-                        "#": ridx + 1,
-                        "Stage": r.name,
-                        "Ratio": pct(r.ratio_used) if ridx > 0 else "—",
-                        "Patients": number(r.patients),
-                        "CAC/pt": money(r.cac_per_patient),
-                        "Cumulative CAC": money(r.cumulative_cac),
-                    })
-                st.dataframe(pd.DataFrame(dario_rows), use_container_width=True, hide_index=True)
+            with tab_d:
+                rows = [{
+                    "#": i+1,
+                    "Stage": r.name,
+                    "Ratio": pct(r.ratio_used) if i > 0 else "—",
+                    "Patients": number(r.patients),
+                    "CAC/Patient": money(r.cac_per_patient),
+                    "Cumulative CAC": money(r.cumulative_cac),
+                } for i, r in enumerate(results["dario_funnel"])]
+                st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
 
-        # =====================================================================
-        # CHARTS
-        # =====================================================================
+        # ----- CHARTS -----
         st.markdown("---")
-        st.subheader("Visual Comparisons")
+        st.subheader("Visualizations")
 
         if pd is not None:
-            # Side-by-side bar chart
-            st.markdown("**Baseline vs Dario: Key Metrics**")
-            comparison_data = pd.DataFrame([
-                {"Metric": "Treated Patients", "Scenario": "Baseline", "Value": baseline_fin["treated_patients"]},
-                {"Metric": "Treated Patients", "Scenario": "Dario", "Value": dario_fin["treated_patients"]},
-                {"Metric": "Net Revenue", "Scenario": "Baseline", "Value": baseline_fin["net_revenue"]},
-                {"Metric": "Net Revenue", "Scenario": "Dario", "Value": dario_fin["net_revenue"]},
-                {"Metric": "Total Cost", "Scenario": "Baseline", "Value": baseline_fin["total_cost"]},
-                {"Metric": "Total Cost", "Scenario": "Dario", "Value": dario_fin["total_cost"]},
-                {"Metric": "Net Profit", "Scenario": "Baseline", "Value": baseline_fin["net_profit"]},
-                {"Metric": "Net Profit", "Scenario": "Dario", "Value": dario_fin["net_profit"]},
+            scenario_colors = alt.Scale(domain=["Baseline", "Dario"], range=[COLORS["baseline"], COLORS["dario"]])
+
+            # Metrics comparison
+            st.markdown("**Key Metrics: Baseline vs Dario**")
+            chart_data = pd.DataFrame([
+                {"Metric": "Net Revenue", "Scenario": "Baseline", "Value": b_fin["net_revenue"]},
+                {"Metric": "Net Revenue", "Scenario": "Dario", "Value": d_fin["net_revenue"]},
+                {"Metric": "Total Cost", "Scenario": "Baseline", "Value": b_fin["total_cost"]},
+                {"Metric": "Total Cost", "Scenario": "Dario", "Value": d_fin["total_cost"]},
+                {"Metric": "Net Profit", "Scenario": "Baseline", "Value": b_fin["net_profit"]},
+                {"Metric": "Net Profit", "Scenario": "Dario", "Value": d_fin["net_profit"]},
             ])
 
-            scenario_colors = alt.Scale(
-                domain=["Baseline", "Dario"],
-                range=[COLORS["baseline"], COLORS["dario"]]
-            )
-
-            bar_chart = alt.Chart(comparison_data).mark_bar().encode(
+            chart = alt.Chart(chart_data).mark_bar().encode(
                 x=alt.X("Scenario:N", title=None),
-                y=alt.Y("Value:Q", title="Value"),
+                y=alt.Y("Value:Q", title="USD", axis=alt.Axis(format="$,.0f")),
                 color=alt.Color("Scenario:N", scale=scenario_colors, legend=None),
                 column=alt.Column("Metric:N", title=None),
-                tooltip=["Scenario", alt.Tooltip("Value:Q", format=",.0f")],
-            ).properties(width=150, height=300)
+                tooltip=["Scenario", alt.Tooltip("Value:Q", format="$,.0f")],
+            ).properties(width=180, height=300)
+            st.altair_chart(chart)
 
-            st.altair_chart(bar_chart)
+            # Funnel comparison
+            st.markdown("**Funnel Progression: Patients by Stage**")
+            funnel_data = []
+            for i, (b, d) in enumerate(zip(results["baseline_funnel"], results["dario_funnel"])):
+                funnel_data.append({"Stage": f"{i+1}. {b.name[:25]}", "Scenario": "Baseline", "Patients": b.patients})
+                funnel_data.append({"Stage": f"{i+1}. {d.name[:25]}", "Scenario": "Dario", "Patients": d.patients})
 
-            # Stage-by-stage patient comparison
-            st.markdown("**Funnel Stage Comparison: Patients by Stage**")
-            stage_comparison = []
-            for ridx, (b_res, d_res) in enumerate(zip(results["baseline_funnel"], results["dario_funnel"])):
-                stage_comparison.append({
-                    "Stage": f"{ridx+1}. {b_res.name[:30]}",
-                    "Scenario": "Baseline",
-                    "Patients": b_res.patients,
-                })
-                stage_comparison.append({
-                    "Stage": f"{ridx+1}. {d_res.name[:30]}",
-                    "Scenario": "Dario",
-                    "Patients": d_res.patients,
-                })
-
-            stage_df = pd.DataFrame(stage_comparison)
-            stage_chart = alt.Chart(stage_df).mark_line(point=True).encode(
-                x=alt.X("Stage:N", sort=None, title=None, axis=alt.Axis(labelAngle=-45, labelLimit=200)),
-                y=alt.Y("Patients:Q", title="Patients", axis=alt.Axis(format=",.0f")),
+            funnel_chart = alt.Chart(pd.DataFrame(funnel_data)).mark_line(point=True).encode(
+                x=alt.X("Stage:N", sort=None, axis=alt.Axis(labelAngle=-45, labelLimit=150)),
+                y=alt.Y("Patients:Q", axis=alt.Axis(format=",.0f")),
                 color=alt.Color("Scenario:N", scale=scenario_colors),
                 tooltip=["Stage", "Scenario", alt.Tooltip("Patients:Q", format=",.0f")],
             ).properties(height=400)
+            st.altair_chart(funnel_chart, use_container_width=True)
 
-            st.altair_chart(stage_chart, use_container_width=True)
-
-            # Sensitivity chart (if available)
+            # Sensitivity
             if results["sensitivity"]:
-                st.markdown("**Sensitivity Analysis: Incremental ROI vs Baseline CAC**")
+                st.markdown("**Sensitivity: Incremental Profit vs Baseline CAC**")
+                st.caption("Shows how incremental profit changes as you vary the baseline CAC assumption. Break-even is at $0 incremental profit.")
+                
                 sens_df = pd.DataFrame(results["sensitivity"])
 
                 sens_chart = alt.Chart(sens_df).mark_line(point=True, color=COLORS["incremental"]).encode(
-                    x=alt.X("baseline_cac:Q", title="Baseline CAC ($/patient)"),
-                    y=alt.Y("incremental_roi_profit:Q", title="Incremental ROI (Profit)"),
+                    x=alt.X("baseline_cac:Q", title="Baseline Stage 6 CAC ($)"),
+                    y=alt.Y("incremental_profit:Q", title="Incremental Profit ($)", axis=alt.Axis(format="$,.0f")),
                     tooltip=[
                         alt.Tooltip("baseline_cac:Q", title="Baseline CAC", format="$.0f"),
-                        alt.Tooltip("incremental_roi_profit:Q", title="Incr ROI", format=".2f"),
                         alt.Tooltip("incremental_profit:Q", title="Incr Profit", format="$,.0f"),
                     ],
                 ).properties(height=350)
 
-                # Add break-even line at ROI = 1.0
-                rule = alt.Chart(pd.DataFrame({"y": [1.0]})).mark_rule(
-                    strokeDash=[5, 5],
-                    color=COLORS["warning"]
-                ).encode(y="y:Q")
+                # Break-even line at $0 profit
+                zero_line = alt.Chart(pd.DataFrame({"y": [0]})).mark_rule(strokeDash=[5,5], color=COLORS["warning"]).encode(y="y:Q")
 
-                st.altair_chart(sens_chart + rule, use_container_width=True)
+                st.altair_chart(sens_chart + zero_line, use_container_width=True)
 
-                # Sensitivity table
-                with st.expander("Sensitivity Data Table"):
-                    sens_display = sens_df.copy()
-                    sens_display["baseline_cac"] = sens_display["baseline_cac"].map(lambda x: f"${x:,.0f}")
-                    sens_display["incremental_cost"] = sens_display["incremental_cost"].map(lambda x: f"${x:,.0f}")
-                    sens_display["incremental_profit"] = sens_display["incremental_profit"].map(lambda x: f"${x:,.0f}")
-                    sens_display["incremental_roi_profit"] = sens_display["incremental_roi_profit"].map(lambda x: f"{x:.2f}x")
-                    st.dataframe(sens_display[["baseline_cac", "incremental_cost", "incremental_profit", "incremental_roi_profit"]], use_container_width=True, hide_index=True)
+                with st.expander("Sensitivity Table"):
+                    disp = sens_df.copy()
+                    disp["baseline_cac"] = disp["baseline_cac"].map(lambda x: f"${x:,.0f}")
+                    disp["incremental_cost"] = disp["incremental_cost"].map(lambda x: f"${x:,.0f}")
+                    disp["incremental_profit"] = disp["incremental_profit"].map(lambda x: f"${x:,.0f}")
+                    disp["incremental_roi_profit"] = disp["incremental_roi_profit"].map(lambda x: f"{x:.2f}x")
+                    st.dataframe(disp, use_container_width=True, hide_index=True)
 
-        # =====================================================================
-        # EXPORT
-        # =====================================================================
+        # ----- EXPORT -----
         st.markdown("---")
         st.subheader("Export")
-
-        export_col1, export_col2 = st.columns(2)
-        with export_col1:
-            xlsx_bytes = build_excel_report(model_name, results, model)
-            st.download_button(
-                "Download Excel Report",
-                data=xlsx_bytes,
-                file_name=f"{model_name.replace(' ', '_')}_report.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                key=f"dl_xlsx_{model_idx}",
-            )
-
-        with export_col2:
-            # Export model config as JSON
-            model_export = {
-                "name": model_name,
-                "model": model,
-            }
-            json_str = json.dumps(model_export, indent=2)
-            st.download_button(
-                "Export Model Config (JSON)",
-                data=json_str,
-                file_name=f"{model_name.replace(' ', '_')}_config.json",
-                mime="application/json",
-                key=f"dl_json_{model_idx}",
-            )
+        
+        ec1, ec2 = st.columns(2)
+        with ec1:
+            xlsx = build_excel_report(model_name, results, model)
+            st.download_button("Download Excel", xlsx, f"{model_name.replace(' ','_')}.xlsx", 
+                             "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", key=f"xlsx_{model_idx}")
+        with ec2:
+            json_data = json.dumps({"name": model_name, "model": model}, indent=2)
+            st.download_button("Export JSON", json_data, f"{model_name.replace(' ','_')}.json", 
+                             "application/json", key=f"json_{model_idx}")
 
 
 # =============================================================================
@@ -1467,466 +1121,135 @@ with tabs[-1]:
     st.subheader("Model Comparison")
 
     if len(st.session_state["models"]) < 1:
-        st.info("Add at least 1 model to see comparisons here.")
+        st.info("Add a model to see comparisons.")
     else:
-        # Model selection
-        st.markdown("**Select models to compare:**")
-        selected_model_names = st.multiselect(
-            "Choose models",
-            options=st.session_state["model_names"],
+        selected = st.multiselect(
+            "Select models:",
+            st.session_state["model_names"],
             default=st.session_state["model_names"],
-            key="comparison_model_select",
-            label_visibility="collapsed",
+            key="comp_select",
         )
 
-        if len(selected_model_names) < 1:
-            st.warning("Please select at least 1 model to compare.")
+        if not selected:
+            st.warning("Select at least one model.")
             st.stop()
 
-        # Filter selected models
-        selected_indices = [i for i, name in enumerate(st.session_state["model_names"]) if name in selected_model_names]
-        selected_models = [st.session_state["models"][i] for i in selected_indices]
-        selected_names = [st.session_state["model_names"][i] for i in selected_indices]
-
-        # =====================================================================
-        # SECTION 1: BASELINE VS DARIO WITHIN EACH MODEL
-        # =====================================================================
-        st.markdown("---")
-        st.markdown("### Baseline vs Dario (Within Each Model)")
-        st.caption("Compare the two scenarios within each selected model")
-
-        within_model_rows = []
-        for mstate, mname in zip(selected_models, selected_names):
-            results = run_full_model(mstate)
-            baseline_fin = results["baseline_fin"]
-            dario_fin = results["dario_fin"]
-            incr = results["incremental"]
-
-            within_model_rows.append({
-                "Model": mname,
-                "Scenario": "Baseline",
-                "Treated Patients": baseline_fin["treated_patients"],
-                "Net Revenue": baseline_fin["net_revenue"],
-                "Total Cost": baseline_fin["total_cost"],
-                "Net Profit": baseline_fin["net_profit"],
-                "ROI": baseline_fin["roi"],
-            })
-            within_model_rows.append({
-                "Model": mname,
-                "Scenario": "Dario",
-                "Treated Patients": dario_fin["treated_patients"],
-                "Net Revenue": dario_fin["net_revenue"],
-                "Total Cost": dario_fin["total_cost"],
-                "Net Profit": dario_fin["net_profit"],
-                "ROI": dario_fin["roi"],
-            })
-            within_model_rows.append({
-                "Model": mname,
-                "Scenario": "Incremental",
-                "Treated Patients": incr["incremental_patients"],
-                "Net Revenue": incr["incremental_net_revenue"],
-                "Total Cost": incr["incremental_cost"],
-                "Net Profit": incr["incremental_profit"],
-                "ROI": incr["incremental_roi_profit"],
-            })
-
-        if pd is not None:
-            within_df = pd.DataFrame(within_model_rows)
-
-            # Format for display
-            within_disp = within_df.copy()
-            within_disp["Treated Patients"] = within_disp["Treated Patients"].map(lambda x: f"{x:,.0f}")
-            within_disp["Net Revenue"] = within_disp["Net Revenue"].map(lambda x: f"${x:,.0f}")
-            within_disp["Total Cost"] = within_disp["Total Cost"].map(lambda x: f"${x:,.0f}")
-            within_disp["Net Profit"] = within_disp["Net Profit"].map(lambda x: f"${x:,.0f}")
-            within_disp["ROI"] = within_disp["ROI"].map(lambda x: f"{x:.2f}x" if x == x else "—")
-
-            st.dataframe(within_disp, use_container_width=True, hide_index=True)
-
-            # Chart: Baseline vs Dario patients by model
-            st.markdown("**Treated Patients: Baseline vs Dario by Model**")
-            patients_chart_data = within_df[within_df["Scenario"] != "Incremental"].copy()
-            
-            scenario_colors = alt.Scale(
-                domain=["Baseline", "Dario"],
-                range=[COLORS["baseline"], COLORS["dario"]]
-            )
-
-            patients_grouped = alt.Chart(patients_chart_data).mark_bar().encode(
-                x=alt.X("Model:N", title=None, axis=alt.Axis(labelAngle=-20)),
-                y=alt.Y("Treated Patients:Q", title="Patients", axis=alt.Axis(format=",.0f")),
-                color=alt.Color("Scenario:N", scale=scenario_colors),
-                xOffset="Scenario:N",
-                tooltip=["Model", "Scenario", alt.Tooltip("Treated Patients:Q", format=",.0f")],
-            ).properties(height=350)
-
-            st.altair_chart(patients_grouped, use_container_width=True)
-
-            # Chart: Net Profit Baseline vs Dario by model
-            st.markdown("**Net Profit: Baseline vs Dario by Model**")
-            profit_chart_data = within_df[within_df["Scenario"] != "Incremental"].copy()
-
-            profit_grouped = alt.Chart(profit_chart_data).mark_bar().encode(
-                x=alt.X("Model:N", title=None, axis=alt.Axis(labelAngle=-20)),
-                y=alt.Y("Net Profit:Q", title="USD", axis=alt.Axis(format="$,.0f")),
-                color=alt.Color("Scenario:N", scale=scenario_colors),
-                xOffset="Scenario:N",
-                tooltip=["Model", "Scenario", alt.Tooltip("Net Profit:Q", format="$,.0f")],
-            ).properties(height=350)
-
-            st.altair_chart(profit_grouped, use_container_width=True)
-
-        # =====================================================================
-        # SECTION 2: INCREMENTAL METRICS ACROSS MODELS
-        # =====================================================================
-        st.markdown("---")
-        st.markdown("### Incremental Value Across Models")
-        st.caption("Compare the lift/delta that Dario provides across models")
+        sel_idx = [i for i, n in enumerate(st.session_state["model_names"]) if n in selected]
+        sel_models = [st.session_state["models"][i] for i in sel_idx]
+        sel_names = [st.session_state["model_names"][i] for i in sel_idx]
 
         # Build comparison data
-        comparison_rows = []
-        for mstate, mname in zip(selected_models, selected_names):
-            results = run_full_model(mstate)
-            baseline_fin = results["baseline_fin"]
-            dario_fin = results["dario_fin"]
-            incr = results["incremental"]
-
-            comparison_rows.append({
-                "Model": mname,
-                "Baseline Patients": baseline_fin["treated_patients"],
-                "Dario Patients": dario_fin["treated_patients"],
-                "Incremental Patients": incr["incremental_patients"],
-                "Baseline Net Revenue": baseline_fin["net_revenue"],
-                "Dario Net Revenue": dario_fin["net_revenue"],
-                "Incremental Net Revenue": incr["incremental_net_revenue"],
-                "Baseline Cost": baseline_fin["total_cost"],
-                "Dario Cost": dario_fin["total_cost"],
-                "Incremental Cost": incr["incremental_cost"],
-                "Baseline Profit": baseline_fin["net_profit"],
-                "Dario Profit": dario_fin["net_profit"],
-                "Incremental Profit": incr["incremental_profit"],
-                "Baseline ROI": baseline_fin["roi"],
-                "Dario ROI": dario_fin["roi"],
-                "Incremental ROI": incr["incremental_roi_profit"],
-                "Cost per Incr Patient": incr["cost_per_incremental_patient"],
+        comp_rows = []
+        for m, n in zip(sel_models, sel_names):
+            r = run_full_model(m)
+            comp_rows.append({
+                "Model": n,
+                "Baseline Patients": r["baseline_fin"]["treated_patients"],
+                "Dario Patients": r["dario_fin"]["treated_patients"],
+                "Incr Patients": r["incremental"]["incremental_patients"],
+                "Baseline Revenue": r["baseline_fin"]["net_revenue"],
+                "Dario Revenue": r["dario_fin"]["net_revenue"],
+                "Incr Revenue": r["incremental"]["incremental_net_revenue"],
+                "Baseline Cost": r["baseline_fin"]["total_cost"],
+                "Dario Cost": r["dario_fin"]["total_cost"],
+                "Incr Cost": r["incremental"]["incremental_cost"],
+                "Incr Profit": r["incremental"]["incremental_profit"],
+                "Incr ROI": r["incremental"]["incremental_roi_profit"],
             })
 
         if pd is not None:
-            comp_df = pd.DataFrame(comparison_rows)
+            comp_df = pd.DataFrame(comp_rows)
 
-            # Summary table
-            st.markdown("**Key Metrics Summary**")
+            st.markdown("### Summary Table")
             disp = comp_df.copy()
-            for col in ["Baseline Patients", "Dario Patients", "Incremental Patients"]:
-                disp[col] = disp[col].map(lambda x: f"{x:,.0f}")
-            for col in ["Baseline Net Revenue", "Dario Net Revenue", "Incremental Net Revenue",
-                        "Baseline Cost", "Dario Cost", "Incremental Cost", 
-                        "Baseline Profit", "Dario Profit", "Incremental Profit", "Cost per Incr Patient"]:
-                disp[col] = disp[col].map(lambda x: f"${x:,.0f}" if x == x else "—")
-            for col in ["Baseline ROI", "Dario ROI", "Incremental ROI"]:
-                disp[col] = disp[col].map(lambda x: f"{x:.2f}x" if x == x else "—")
-
+            for c in ["Baseline Patients", "Dario Patients", "Incr Patients"]:
+                disp[c] = disp[c].map(lambda x: f"{x:,.0f}")
+            for c in ["Baseline Revenue", "Dario Revenue", "Incr Revenue", "Baseline Cost", "Dario Cost", "Incr Cost", "Incr Profit"]:
+                disp[c] = disp[c].map(lambda x: f"${x:,.0f}")
+            disp["Incr ROI"] = disp["Incr ROI"].map(lambda x: f"{x:.2f}x" if x != float("inf") and x == x else "∞" if x == float("inf") else "—")
             st.dataframe(disp, use_container_width=True, hide_index=True)
 
-            # Charts
             st.markdown("### Comparison Charts")
+            
+            model_colors = alt.Scale(domain=sel_names, range=TAB_PALETTE[:len(sel_names)])
 
-            model_color_scale = alt.Scale(
-                domain=selected_names,
-                range=TAB_PALETTE[:len(selected_names)],
-            )
-
-            chart_col1, chart_col2 = st.columns(2)
-
-            with chart_col1:
-                st.markdown("**Incremental ROI by Model**")
-                roi_chart = alt.Chart(comp_df).mark_bar(cornerRadiusTopLeft=4, cornerRadiusTopRight=4).encode(
-                    x=alt.X("Model:N", title=None, axis=alt.Axis(labelAngle=-20)),
-                    y=alt.Y("Incremental ROI:Q", title="ROI (x)"),
-                    color=alt.Color("Model:N", scale=model_color_scale, legend=None),
-                    tooltip=["Model:N", alt.Tooltip("Incremental ROI:Q", format=".2f")],
+            c1, c2 = st.columns(2)
+            with c1:
+                st.markdown("**Incremental Profit**")
+                ch = alt.Chart(comp_df).mark_bar(cornerRadiusTopLeft=4, cornerRadiusTopRight=4).encode(
+                    x=alt.X("Model:N", axis=alt.Axis(labelAngle=-20)),
+                    y=alt.Y("Incr Profit:Q", axis=alt.Axis(format="$,.0f")),
+                    color=alt.Color("Model:N", scale=model_colors, legend=None),
+                    tooltip=["Model", alt.Tooltip("Incr Profit:Q", format="$,.0f")],
                 ).properties(height=300)
-                st.altair_chart(roi_chart, use_container_width=True)
+                st.altair_chart(ch, use_container_width=True)
 
-            with chart_col2:
-                st.markdown("**Incremental Profit by Model**")
-                profit_chart = alt.Chart(comp_df).mark_bar(cornerRadiusTopLeft=4, cornerRadiusTopRight=4).encode(
-                    x=alt.X("Model:N", title=None, axis=alt.Axis(labelAngle=-20)),
-                    y=alt.Y("Incremental Profit:Q", title="USD", axis=alt.Axis(format="$,.0f")),
-                    color=alt.Color("Model:N", scale=model_color_scale, legend=None),
-                    tooltip=["Model:N", alt.Tooltip("Incremental Profit:Q", format="$,.0f")],
+            with c2:
+                st.markdown("**Incremental Patients**")
+                ch = alt.Chart(comp_df).mark_bar(cornerRadiusTopLeft=4, cornerRadiusTopRight=4).encode(
+                    x=alt.X("Model:N", axis=alt.Axis(labelAngle=-20)),
+                    y=alt.Y("Incr Patients:Q", axis=alt.Axis(format=",.0f")),
+                    color=alt.Color("Model:N", scale=model_colors, legend=None),
+                    tooltip=["Model", alt.Tooltip("Incr Patients:Q", format=",.0f")],
                 ).properties(height=300)
-                st.altair_chart(profit_chart, use_container_width=True)
+                st.altair_chart(ch, use_container_width=True)
 
-            chart_col3, chart_col4 = st.columns(2)
+            # Model diff
+            if len(sel_names) >= 2:
+                st.markdown("### Parameter Diff")
+                dc1, dc2 = st.columns(2)
+                ma = dc1.selectbox("Model A:", sel_names, 0, key="diff_a")
+                mb = dc2.selectbox("Model B:", [n for n in sel_names if n != ma], 0, key="diff_b")
 
-            with chart_col3:
-                st.markdown("**Incremental Patients by Model**")
-                patients_chart = alt.Chart(comp_df).mark_bar(cornerRadiusTopLeft=4, cornerRadiusTopRight=4).encode(
-                    x=alt.X("Model:N", title=None, axis=alt.Axis(labelAngle=-20)),
-                    y=alt.Y("Incremental Patients:Q", title="Patients", axis=alt.Axis(format=",.0f")),
-                    color=alt.Color("Model:N", scale=model_color_scale, legend=None),
-                    tooltip=["Model:N", alt.Tooltip("Incremental Patients:Q", format=",.0f")],
-                ).properties(height=300)
-                st.altair_chart(patients_chart, use_container_width=True)
+                idx_a = st.session_state["model_names"].index(ma)
+                idx_b = st.session_state["model_names"].index(mb)
+                mod_a = st.session_state["models"][idx_a]
+                mod_b = st.session_state["models"][idx_b]
 
-            with chart_col4:
-                st.markdown("**Incremental Net Revenue by Model**")
-                rev_chart = alt.Chart(comp_df).mark_bar(cornerRadiusTopLeft=4, cornerRadiusTopRight=4).encode(
-                    x=alt.X("Model:N", title=None, axis=alt.Axis(labelAngle=-20)),
-                    y=alt.Y("Incremental Net Revenue:Q", title="USD", axis=alt.Axis(format="$,.0f")),
-                    color=alt.Color("Model:N", scale=model_color_scale, legend=None),
-                    tooltip=["Model:N", alt.Tooltip("Incremental Net Revenue:Q", format="$,.0f")],
-                ).properties(height=300)
-                st.altair_chart(rev_chart, use_container_width=True)
-
-            # =====================================================================
-            # SECTION 3: FUNNEL STAGE COMPARISON
-            # =====================================================================
-            st.markdown("---")
-            st.markdown("### Funnel Stage Comparison (Patients)")
-            st.caption("See where in the funnel each model gains or loses patients")
-
-            stage_rows = []
-            for mstate, mname in zip(selected_models, selected_names):
-                results = run_full_model(mstate)
-                for ridx, (b_res, d_res) in enumerate(zip(results["baseline_funnel"], results["dario_funnel"])):
-                    stage_label = f"{ridx+1}. {b_res.name[:35]}" + ("..." if len(b_res.name) > 35 else "")
-                    stage_rows.append({
-                        "Model": mname,
-                        "Stage": stage_label,
-                        "Scenario": "Baseline",
-                        "Patients": b_res.patients,
-                    })
-                    stage_rows.append({
-                        "Model": mname,
-                        "Stage": stage_label,
-                        "Scenario": "Dario",
-                        "Patients": d_res.patients,
-                    })
-
-            stage_df = pd.DataFrame(stage_rows)
-
-            # Let user pick which model to view stage breakdown for
-            stage_model_select = st.selectbox(
-                "Select model for stage breakdown:",
-                options=selected_names,
-                key="stage_comparison_model",
-            )
-
-            filtered_stage_df = stage_df[stage_df["Model"] == stage_model_select]
-
-            stage_chart = alt.Chart(filtered_stage_df).mark_line(point=True).encode(
-                x=alt.X("Stage:N", sort=None, title=None, axis=alt.Axis(labelAngle=-45, labelLimit=200)),
-                y=alt.Y("Patients:Q", title="Patients", axis=alt.Axis(format=",.0f")),
-                color=alt.Color("Scenario:N", scale=scenario_colors),
-                tooltip=["Stage", "Scenario", alt.Tooltip("Patients:Q", format=",.0f")],
-            ).properties(height=400)
-
-            st.altair_chart(stage_chart, use_container_width=True)
-
-            # =====================================================================
-            # SECTION 4: MODEL DIFF VIEW
-            # =====================================================================
-            if len(selected_names) >= 2:
-                st.markdown("---")
-                st.markdown("### Model Diff View")
-                st.caption("Compare parameter differences between two models")
-
-                diff_col1, diff_col2 = st.columns(2)
-                with diff_col1:
-                    diff_model_a = st.selectbox(
-                        "Model A:",
-                        options=selected_names,
-                        index=0,
-                        key="diff_model_a",
-                    )
-                with diff_col2:
-                    remaining = [n for n in selected_names if n != diff_model_a]
-                    diff_model_b = st.selectbox(
-                        "Model B:",
-                        options=remaining,
-                        index=0,
-                        key="diff_model_b",
-                    )
-
-                idx_a = st.session_state["model_names"].index(diff_model_a)
-                idx_b = st.session_state["model_names"].index(diff_model_b)
-                model_a = st.session_state["models"][idx_a]
-                model_b = st.session_state["models"][idx_b]
-
-                diff_rows = []
-
-                # Compare shared settings
-                shared_params = [
-                    ("Shared Base Population", 
-                     model_a["shared"]["shared_base_population"], 
-                     model_b["shared"]["shared_base_population"], 
-                     "{:,.0f}"),
+                diffs = []
+                # Compare key params
+                params = [
+                    ("Shared Base Pop", mod_a["shared"]["shared_base_population"], mod_b["shared"]["shared_base_population"], "{:,.0f}"),
+                    ("Baseline Stage 6 CAC", mod_a["baseline"]["stage_6_cac"], mod_b["baseline"]["stage_6_cac"], "${:,.0f}"),
+                    ("Dario Stage 6 CAC", mod_a["dario"]["stage_6_cac"], mod_b["dario"]["stage_6_cac"], "${:,.0f}"),
+                    ("Baseline ARPP", mod_a["baseline"]["arpp"], mod_b["baseline"]["arpp"], "${:,.0f}"),
+                    ("Dario ARPP", mod_a["dario"]["arpp"], mod_b["dario"]["arpp"], "${:,.0f}"),
+                    ("Baseline Discount", mod_a["baseline"]["discount"], mod_b["baseline"]["discount"], "{:.1%}"),
+                    ("Dario Discount", mod_a["dario"]["discount"], mod_b["dario"]["discount"], "{:.1%}"),
                 ]
-                for label, val_a, val_b, fmt in shared_params:
-                    if val_a != val_b:
-                        diff_rows.append({
-                            "Parameter": label,
-                            f"{diff_model_a}": fmt.format(val_a),
-                            f"{diff_model_b}": fmt.format(val_b),
-                            "Difference": fmt.format(val_b - val_a),
-                        })
+                for label, va, vb, fmt in params:
+                    if va != vb:
+                        diffs.append({"Parameter": label, ma: fmt.format(va), mb: fmt.format(vb)})
 
-                # Compare baseline scenario
-                baseline_params = [
-                    ("Baseline ARPP", "arpp", "${:,.0f}"),
-                    ("Baseline Treatment Years", "treatment_years", "{:.1f}"),
-                    ("Baseline Discount", "discount", "{:.1%}"),
-                    ("Baseline Stage 6 CAC", "cac", "${:,.0f}"),  # Special handling
-                ]
-                for label, key, fmt in baseline_params:
-                    if key == "cac":
-                        val_a = model_a["baseline"]["cac"][5]
-                        val_b = model_b["baseline"]["cac"][5]
-                    else:
-                        val_a = model_a["baseline"].get(key, 0)
-                        val_b = model_b["baseline"].get(key, 0)
-                    if val_a != val_b:
-                        if "%" in fmt:
-                            diff_str = f"{(val_b - val_a)*100:+.1f}pp"
-                        else:
-                            diff_str = fmt.format(val_b - val_a)
-                        diff_rows.append({
-                            "Parameter": label,
-                            f"{diff_model_a}": fmt.format(val_a),
-                            f"{diff_model_b}": fmt.format(val_b),
-                            "Difference": diff_str,
-                        })
-
-                # Compare dario scenario
-                dario_params = [
-                    ("Dario ARPP", "arpp", "${:,.0f}"),
-                    ("Dario Treatment Years", "treatment_years", "{:.1f}"),
-                    ("Dario Discount", "discount", "{:.1%}"),
-                    ("Dario Stage 6 CAC", "cac", "${:,.0f}"),
-                ]
-                for label, key, fmt in dario_params:
-                    if key == "cac":
-                        val_a = model_a["dario"]["cac"][5]
-                        val_b = model_b["dario"]["cac"][5]
-                    else:
-                        val_a = model_a["dario"].get(key, 0)
-                        val_b = model_b["dario"].get(key, 0)
-                    if val_a != val_b:
-                        if "%" in fmt:
-                            diff_str = f"{(val_b - val_a)*100:+.1f}pp"
-                        else:
-                            diff_str = fmt.format(val_b - val_a)
-                        diff_rows.append({
-                            "Parameter": label,
-                            f"{diff_model_a}": fmt.format(val_a),
-                            f"{diff_model_b}": fmt.format(val_b),
-                            "Difference": diff_str,
-                        })
-
-                # Compare baseline ratios
-                for sidx in range(1, NUM_STAGES):
-                    ratio_a = model_a["baseline"]["ratios"][sidx]
-                    ratio_b = model_b["baseline"]["ratios"][sidx]
-                    if ratio_a != ratio_b:
-                        diff_rows.append({
-                            "Parameter": f"Baseline Stage {sidx+1} Ratio",
-                            f"{diff_model_a}": f"{ratio_a:.1%}",
-                            f"{diff_model_b}": f"{ratio_b:.1%}",
-                            "Difference": f"{(ratio_b - ratio_a)*100:+.1f}pp",
-                        })
-
-                # Compare dario ratios
-                for sidx in range(1, NUM_STAGES):
-                    ratio_a = model_a["dario"]["ratios"][sidx]
-                    ratio_b = model_b["dario"]["ratios"][sidx]
-                    if ratio_a != ratio_b:
-                        diff_rows.append({
-                            "Parameter": f"Dario Stage {sidx+1} Ratio",
-                            f"{diff_model_a}": f"{ratio_a:.1%}",
-                            f"{diff_model_b}": f"{ratio_b:.1%}",
-                            "Difference": f"{(ratio_b - ratio_a)*100:+.1f}pp",
-                        })
-
-                # Compare platform costs
-                pc_labels = [
-                    ("Dario Connect Config", "dario_connect_config"),
-                    ("Dario Care Config", "dario_care_config"),
-                    ("Sub Dario Connect", "sub_dario_connect"),
-                    ("Sub Dario Care", "sub_dario_care"),
-                    ("Maintenance & Support", "maintenance_support"),
-                ]
-                for label, key in pc_labels:
-                    val_a = model_a["dario"]["platform_costs"].get(key, 0)
-                    val_b = model_b["dario"]["platform_costs"].get(key, 0)
-                    if val_a != val_b:
-                        diff_rows.append({
-                            "Parameter": f"Platform: {label}",
-                            f"{diff_model_a}": f"${val_a:,.0f}",
-                            f"{diff_model_b}": f"${val_b:,.0f}",
-                            "Difference": f"${val_b - val_a:+,.0f}",
-                        })
-
-                if diff_rows:
-                    diff_df = pd.DataFrame(diff_rows)
-                    st.dataframe(diff_df, use_container_width=True, hide_index=True)
+                if diffs:
+                    st.dataframe(pd.DataFrame(diffs), use_container_width=True, hide_index=True)
                 else:
-                    st.success("These two models have identical parameters!")
+                    st.success("Models have identical key parameters!")
 
-            # =====================================================================
-            # SECTION 5: EXPORT
-            # =====================================================================
-            st.markdown("---")
-            st.markdown("### Export Comparison")
-
-            export_col1, export_col2 = st.columns(2)
-
-            with export_col1:
-                comp_csv = comp_df.to_csv(index=False).encode("utf-8")
-                st.download_button(
-                    "Download Comparison CSV",
-                    data=comp_csv,
-                    file_name="pharmaroi_comparison.csv",
-                    mime="text/csv",
-                    key="comparison_csv_download",
-                )
-
-            with export_col2:
-                within_csv = within_df.to_csv(index=False).encode("utf-8")
-                st.download_button(
-                    "Download Baseline vs Dario CSV",
-                    data=within_csv,
-                    file_name="pharmaroi_baseline_vs_dario.csv",
-                    mime="text/csv",
-                    key="within_model_csv_download",
-                )
-
+            st.markdown("### Export")
+            csv = comp_df.to_csv(index=False).encode()
+            st.download_button("Download CSV", csv, "comparison.csv", "text/csv")
 
 
 # =============================================================================
-# FOOTER / HELP
+# FOOTER
 # =============================================================================
 st.divider()
-st.subheader("How to Interpret")
-st.write("""
-**Scenarios:**
-- **Baseline**: Current state without Dario intervention
-- **Dario**: State with Dario platform enabled (expected improvements)
-- **Incremental**: The difference/lift that Dario provides
+st.subheader("Reference")
+st.markdown("""
+**CAC Logic:**
+- Only **Stage 6 CAC** matters — it creates the total acquisition cost pool
+- Stages 1-5 have no CAC; Stages 7-13 inherit from the Stage 6 pool
 
 **Key Formulas:**
-- **Gross Revenue** = Treated Patients × ARPP × Treatment Years
+- **Gross Revenue** = Patients × ARPP × Treatment Years
 - **Net Revenue** = Gross Revenue × (1 - Discount)
 - **Total Cost** = Funnel CAC + Platform Costs
 - **Net Profit** = Net Revenue - Total Cost
-- **Incremental ROI** = Incremental Net Profit / Incremental Cost
+- **Standalone ROI** = Net Revenue / Total Cost
+- **Incremental ROI (Profit)** = Incremental Profit / Incremental Cost
 
 **Break-even:**
-- The number of incremental patients needed for Dario investment to pay off
-- If actual incremental patients > break-even patients, the investment is profitable
-
-**Sensitivity Analysis:**
-- When baseline CAC is uncertain, sensitivity mode shows how ROI changes across a range of assumptions
-- The dotted line at ROI = 1.0x represents break-even
+- Break-even Patients = Incremental Cost / Net Revenue per Patient
+- If Dario costs ≤ baseline, no break-even threshold applies
 """)
