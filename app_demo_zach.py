@@ -1466,8 +1466,8 @@ for model_idx, model_tab in enumerate(tabs[:-1]):
 with tabs[-1]:
     st.subheader("Model Comparison")
 
-    if len(st.session_state["models"]) < 2:
-        st.info("Add at least 2 models to compare them here.")
+    if len(st.session_state["models"]) < 1:
+        st.info("Add at least 1 model to see comparisons here.")
     else:
         # Model selection
         st.markdown("**Select models to compare:**")
@@ -1479,14 +1479,109 @@ with tabs[-1]:
             label_visibility="collapsed",
         )
 
-        if len(selected_model_names) < 2:
-            st.warning("Please select at least 2 models to compare.")
+        if len(selected_model_names) < 1:
+            st.warning("Please select at least 1 model to compare.")
             st.stop()
 
         # Filter selected models
         selected_indices = [i for i, name in enumerate(st.session_state["model_names"]) if name in selected_model_names]
         selected_models = [st.session_state["models"][i] for i in selected_indices]
         selected_names = [st.session_state["model_names"][i] for i in selected_indices]
+
+        # =====================================================================
+        # SECTION 1: BASELINE VS DARIO WITHIN EACH MODEL
+        # =====================================================================
+        st.markdown("---")
+        st.markdown("### Baseline vs Dario (Within Each Model)")
+        st.caption("Compare the two scenarios within each selected model")
+
+        within_model_rows = []
+        for mstate, mname in zip(selected_models, selected_names):
+            results = run_full_model(mstate)
+            baseline_fin = results["baseline_fin"]
+            dario_fin = results["dario_fin"]
+            incr = results["incremental"]
+
+            within_model_rows.append({
+                "Model": mname,
+                "Scenario": "Baseline",
+                "Treated Patients": baseline_fin["treated_patients"],
+                "Net Revenue": baseline_fin["net_revenue"],
+                "Total Cost": baseline_fin["total_cost"],
+                "Net Profit": baseline_fin["net_profit"],
+                "ROI": baseline_fin["roi"],
+            })
+            within_model_rows.append({
+                "Model": mname,
+                "Scenario": "Dario",
+                "Treated Patients": dario_fin["treated_patients"],
+                "Net Revenue": dario_fin["net_revenue"],
+                "Total Cost": dario_fin["total_cost"],
+                "Net Profit": dario_fin["net_profit"],
+                "ROI": dario_fin["roi"],
+            })
+            within_model_rows.append({
+                "Model": mname,
+                "Scenario": "Incremental",
+                "Treated Patients": incr["incremental_patients"],
+                "Net Revenue": incr["incremental_net_revenue"],
+                "Total Cost": incr["incremental_cost"],
+                "Net Profit": incr["incremental_profit"],
+                "ROI": incr["incremental_roi_profit"],
+            })
+
+        if pd is not None:
+            within_df = pd.DataFrame(within_model_rows)
+
+            # Format for display
+            within_disp = within_df.copy()
+            within_disp["Treated Patients"] = within_disp["Treated Patients"].map(lambda x: f"{x:,.0f}")
+            within_disp["Net Revenue"] = within_disp["Net Revenue"].map(lambda x: f"${x:,.0f}")
+            within_disp["Total Cost"] = within_disp["Total Cost"].map(lambda x: f"${x:,.0f}")
+            within_disp["Net Profit"] = within_disp["Net Profit"].map(lambda x: f"${x:,.0f}")
+            within_disp["ROI"] = within_disp["ROI"].map(lambda x: f"{x:.2f}x" if x == x else "—")
+
+            st.dataframe(within_disp, use_container_width=True, hide_index=True)
+
+            # Chart: Baseline vs Dario patients by model
+            st.markdown("**Treated Patients: Baseline vs Dario by Model**")
+            patients_chart_data = within_df[within_df["Scenario"] != "Incremental"].copy()
+            
+            scenario_colors = alt.Scale(
+                domain=["Baseline", "Dario"],
+                range=[COLORS["baseline"], COLORS["dario"]]
+            )
+
+            patients_grouped = alt.Chart(patients_chart_data).mark_bar().encode(
+                x=alt.X("Model:N", title=None, axis=alt.Axis(labelAngle=-20)),
+                y=alt.Y("Treated Patients:Q", title="Patients", axis=alt.Axis(format=",.0f")),
+                color=alt.Color("Scenario:N", scale=scenario_colors),
+                xOffset="Scenario:N",
+                tooltip=["Model", "Scenario", alt.Tooltip("Treated Patients:Q", format=",.0f")],
+            ).properties(height=350)
+
+            st.altair_chart(patients_grouped, use_container_width=True)
+
+            # Chart: Net Profit Baseline vs Dario by model
+            st.markdown("**Net Profit: Baseline vs Dario by Model**")
+            profit_chart_data = within_df[within_df["Scenario"] != "Incremental"].copy()
+
+            profit_grouped = alt.Chart(profit_chart_data).mark_bar().encode(
+                x=alt.X("Model:N", title=None, axis=alt.Axis(labelAngle=-20)),
+                y=alt.Y("Net Profit:Q", title="USD", axis=alt.Axis(format="$,.0f")),
+                color=alt.Color("Scenario:N", scale=scenario_colors),
+                xOffset="Scenario:N",
+                tooltip=["Model", "Scenario", alt.Tooltip("Net Profit:Q", format="$,.0f")],
+            ).properties(height=350)
+
+            st.altair_chart(profit_grouped, use_container_width=True)
+
+        # =====================================================================
+        # SECTION 2: INCREMENTAL METRICS ACROSS MODELS
+        # =====================================================================
+        st.markdown("---")
+        st.markdown("### Incremental Value Across Models")
+        st.caption("Compare the lift/delta that Dario provides across models")
 
         # Build comparison data
         comparison_rows = []
@@ -1507,22 +1602,29 @@ with tabs[-1]:
                 "Baseline Cost": baseline_fin["total_cost"],
                 "Dario Cost": dario_fin["total_cost"],
                 "Incremental Cost": incr["incremental_cost"],
+                "Baseline Profit": baseline_fin["net_profit"],
+                "Dario Profit": dario_fin["net_profit"],
                 "Incremental Profit": incr["incremental_profit"],
+                "Baseline ROI": baseline_fin["roi"],
+                "Dario ROI": dario_fin["roi"],
                 "Incremental ROI": incr["incremental_roi_profit"],
+                "Cost per Incr Patient": incr["cost_per_incremental_patient"],
             })
 
         if pd is not None:
             comp_df = pd.DataFrame(comparison_rows)
 
             # Summary table
-            st.markdown("### Key Metrics")
+            st.markdown("**Key Metrics Summary**")
             disp = comp_df.copy()
             for col in ["Baseline Patients", "Dario Patients", "Incremental Patients"]:
                 disp[col] = disp[col].map(lambda x: f"{x:,.0f}")
             for col in ["Baseline Net Revenue", "Dario Net Revenue", "Incremental Net Revenue",
-                        "Baseline Cost", "Dario Cost", "Incremental Cost", "Incremental Profit"]:
-                disp[col] = disp[col].map(lambda x: f"${x:,.0f}")
-            disp["Incremental ROI"] = disp["Incremental ROI"].map(lambda x: f"{x:.2f}x" if x == x else "—")
+                        "Baseline Cost", "Dario Cost", "Incremental Cost", 
+                        "Baseline Profit", "Dario Profit", "Incremental Profit", "Cost per Incr Patient"]:
+                disp[col] = disp[col].map(lambda x: f"${x:,.0f}" if x == x else "—")
+            for col in ["Baseline ROI", "Dario ROI", "Incremental ROI"]:
+                disp[col] = disp[col].map(lambda x: f"{x:.2f}x" if x == x else "—")
 
             st.dataframe(disp, use_container_width=True, hide_index=True)
 
@@ -1578,15 +1680,228 @@ with tabs[-1]:
                 ).properties(height=300)
                 st.altair_chart(rev_chart, use_container_width=True)
 
-            # Export comparison
-            st.markdown("### Export")
-            comp_csv = comp_df.to_csv(index=False).encode("utf-8")
-            st.download_button(
-                "Download Comparison CSV",
-                data=comp_csv,
-                file_name="pharmaroi_comparison.csv",
-                mime="text/csv",
+            # =====================================================================
+            # SECTION 3: FUNNEL STAGE COMPARISON
+            # =====================================================================
+            st.markdown("---")
+            st.markdown("### Funnel Stage Comparison (Patients)")
+            st.caption("See where in the funnel each model gains or loses patients")
+
+            stage_rows = []
+            for mstate, mname in zip(selected_models, selected_names):
+                results = run_full_model(mstate)
+                for ridx, (b_res, d_res) in enumerate(zip(results["baseline_funnel"], results["dario_funnel"])):
+                    stage_label = f"{ridx+1}. {b_res.name[:35]}" + ("..." if len(b_res.name) > 35 else "")
+                    stage_rows.append({
+                        "Model": mname,
+                        "Stage": stage_label,
+                        "Scenario": "Baseline",
+                        "Patients": b_res.patients,
+                    })
+                    stage_rows.append({
+                        "Model": mname,
+                        "Stage": stage_label,
+                        "Scenario": "Dario",
+                        "Patients": d_res.patients,
+                    })
+
+            stage_df = pd.DataFrame(stage_rows)
+
+            # Let user pick which model to view stage breakdown for
+            stage_model_select = st.selectbox(
+                "Select model for stage breakdown:",
+                options=selected_names,
+                key="stage_comparison_model",
             )
+
+            filtered_stage_df = stage_df[stage_df["Model"] == stage_model_select]
+
+            stage_chart = alt.Chart(filtered_stage_df).mark_line(point=True).encode(
+                x=alt.X("Stage:N", sort=None, title=None, axis=alt.Axis(labelAngle=-45, labelLimit=200)),
+                y=alt.Y("Patients:Q", title="Patients", axis=alt.Axis(format=",.0f")),
+                color=alt.Color("Scenario:N", scale=scenario_colors),
+                tooltip=["Stage", "Scenario", alt.Tooltip("Patients:Q", format=",.0f")],
+            ).properties(height=400)
+
+            st.altair_chart(stage_chart, use_container_width=True)
+
+            # =====================================================================
+            # SECTION 4: MODEL DIFF VIEW
+            # =====================================================================
+            if len(selected_names) >= 2:
+                st.markdown("---")
+                st.markdown("### Model Diff View")
+                st.caption("Compare parameter differences between two models")
+
+                diff_col1, diff_col2 = st.columns(2)
+                with diff_col1:
+                    diff_model_a = st.selectbox(
+                        "Model A:",
+                        options=selected_names,
+                        index=0,
+                        key="diff_model_a",
+                    )
+                with diff_col2:
+                    remaining = [n for n in selected_names if n != diff_model_a]
+                    diff_model_b = st.selectbox(
+                        "Model B:",
+                        options=remaining,
+                        index=0,
+                        key="diff_model_b",
+                    )
+
+                idx_a = st.session_state["model_names"].index(diff_model_a)
+                idx_b = st.session_state["model_names"].index(diff_model_b)
+                model_a = st.session_state["models"][idx_a]
+                model_b = st.session_state["models"][idx_b]
+
+                diff_rows = []
+
+                # Compare shared settings
+                shared_params = [
+                    ("Shared Base Population", 
+                     model_a["shared"]["shared_base_population"], 
+                     model_b["shared"]["shared_base_population"], 
+                     "{:,.0f}"),
+                ]
+                for label, val_a, val_b, fmt in shared_params:
+                    if val_a != val_b:
+                        diff_rows.append({
+                            "Parameter": label,
+                            f"{diff_model_a}": fmt.format(val_a),
+                            f"{diff_model_b}": fmt.format(val_b),
+                            "Difference": fmt.format(val_b - val_a),
+                        })
+
+                # Compare baseline scenario
+                baseline_params = [
+                    ("Baseline ARPP", "arpp", "${:,.0f}"),
+                    ("Baseline Treatment Years", "treatment_years", "{:.1f}"),
+                    ("Baseline Discount", "discount", "{:.1%}"),
+                    ("Baseline Stage 6 CAC", "cac", "${:,.0f}"),  # Special handling
+                ]
+                for label, key, fmt in baseline_params:
+                    if key == "cac":
+                        val_a = model_a["baseline"]["cac"][5]
+                        val_b = model_b["baseline"]["cac"][5]
+                    else:
+                        val_a = model_a["baseline"].get(key, 0)
+                        val_b = model_b["baseline"].get(key, 0)
+                    if val_a != val_b:
+                        if "%" in fmt:
+                            diff_str = f"{(val_b - val_a)*100:+.1f}pp"
+                        else:
+                            diff_str = fmt.format(val_b - val_a)
+                        diff_rows.append({
+                            "Parameter": label,
+                            f"{diff_model_a}": fmt.format(val_a),
+                            f"{diff_model_b}": fmt.format(val_b),
+                            "Difference": diff_str,
+                        })
+
+                # Compare dario scenario
+                dario_params = [
+                    ("Dario ARPP", "arpp", "${:,.0f}"),
+                    ("Dario Treatment Years", "treatment_years", "{:.1f}"),
+                    ("Dario Discount", "discount", "{:.1%}"),
+                    ("Dario Stage 6 CAC", "cac", "${:,.0f}"),
+                ]
+                for label, key, fmt in dario_params:
+                    if key == "cac":
+                        val_a = model_a["dario"]["cac"][5]
+                        val_b = model_b["dario"]["cac"][5]
+                    else:
+                        val_a = model_a["dario"].get(key, 0)
+                        val_b = model_b["dario"].get(key, 0)
+                    if val_a != val_b:
+                        if "%" in fmt:
+                            diff_str = f"{(val_b - val_a)*100:+.1f}pp"
+                        else:
+                            diff_str = fmt.format(val_b - val_a)
+                        diff_rows.append({
+                            "Parameter": label,
+                            f"{diff_model_a}": fmt.format(val_a),
+                            f"{diff_model_b}": fmt.format(val_b),
+                            "Difference": diff_str,
+                        })
+
+                # Compare baseline ratios
+                for sidx in range(1, NUM_STAGES):
+                    ratio_a = model_a["baseline"]["ratios"][sidx]
+                    ratio_b = model_b["baseline"]["ratios"][sidx]
+                    if ratio_a != ratio_b:
+                        diff_rows.append({
+                            "Parameter": f"Baseline Stage {sidx+1} Ratio",
+                            f"{diff_model_a}": f"{ratio_a:.1%}",
+                            f"{diff_model_b}": f"{ratio_b:.1%}",
+                            "Difference": f"{(ratio_b - ratio_a)*100:+.1f}pp",
+                        })
+
+                # Compare dario ratios
+                for sidx in range(1, NUM_STAGES):
+                    ratio_a = model_a["dario"]["ratios"][sidx]
+                    ratio_b = model_b["dario"]["ratios"][sidx]
+                    if ratio_a != ratio_b:
+                        diff_rows.append({
+                            "Parameter": f"Dario Stage {sidx+1} Ratio",
+                            f"{diff_model_a}": f"{ratio_a:.1%}",
+                            f"{diff_model_b}": f"{ratio_b:.1%}",
+                            "Difference": f"{(ratio_b - ratio_a)*100:+.1f}pp",
+                        })
+
+                # Compare platform costs
+                pc_labels = [
+                    ("Dario Connect Config", "dario_connect_config"),
+                    ("Dario Care Config", "dario_care_config"),
+                    ("Sub Dario Connect", "sub_dario_connect"),
+                    ("Sub Dario Care", "sub_dario_care"),
+                    ("Maintenance & Support", "maintenance_support"),
+                ]
+                for label, key in pc_labels:
+                    val_a = model_a["dario"]["platform_costs"].get(key, 0)
+                    val_b = model_b["dario"]["platform_costs"].get(key, 0)
+                    if val_a != val_b:
+                        diff_rows.append({
+                            "Parameter": f"Platform: {label}",
+                            f"{diff_model_a}": f"${val_a:,.0f}",
+                            f"{diff_model_b}": f"${val_b:,.0f}",
+                            "Difference": f"${val_b - val_a:+,.0f}",
+                        })
+
+                if diff_rows:
+                    diff_df = pd.DataFrame(diff_rows)
+                    st.dataframe(diff_df, use_container_width=True, hide_index=True)
+                else:
+                    st.success("These two models have identical parameters!")
+
+            # =====================================================================
+            # SECTION 5: EXPORT
+            # =====================================================================
+            st.markdown("---")
+            st.markdown("### Export Comparison")
+
+            export_col1, export_col2 = st.columns(2)
+
+            with export_col1:
+                comp_csv = comp_df.to_csv(index=False).encode("utf-8")
+                st.download_button(
+                    "Download Comparison CSV",
+                    data=comp_csv,
+                    file_name="pharmaroi_comparison.csv",
+                    mime="text/csv",
+                    key="comparison_csv_download",
+                )
+
+            with export_col2:
+                within_csv = within_df.to_csv(index=False).encode("utf-8")
+                st.download_button(
+                    "Download Baseline vs Dario CSV",
+                    data=within_csv,
+                    file_name="pharmaroi_baseline_vs_dario.csv",
+                    mime="text/csv",
+                    key="within_model_csv_download",
+                )
+
 
 
 # =============================================================================
