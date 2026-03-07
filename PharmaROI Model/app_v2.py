@@ -534,12 +534,13 @@ for model_idx, model_tab in enumerate(tabs[:-1]):
         st.markdown(f"<div style='border-left: 4px solid {tab_color}; padding-left: 12px; margin-bottom: 8px;'><strong style='font-size:1.1rem'>{model_name}</strong></div>", unsafe_allow_html=True)
 
         roi = fin["roi_net"]
-        k1, k2, k3, k4, k5 = st.columns(5)
+        k1, k2, k3, k4, k5, k6 = st.columns(5)
         k1.metric("ROI (Net)", roix(roi) if roi == roi else "—")
         k2.metric("Treated Patients", number(fin["treated_patients"]))
         k3.metric("Net Revenue", money(fin["net_revenue"]))
         k4.metric("Funnel CAC", money(fin["funnel_cac_total"]))
         k5.metric("Total CAC", money(fin["funnel_cac_total"] + fin["platform_costs_total"]))
+        k6.metric("Net Profit", money(fin["net_revenue"] - fin["funnel_cac_total"] - fin["platform_costs_total"]))
 
 
         st.markdown(
@@ -860,6 +861,7 @@ st.write("""
 - Each **model tab** is fully independent — tweak funnel stages, ratios, CAC, ARPP, and discount separately.
 - Use **Add New Model** or **Duplicate Current** to create variants (e.g. optimistic vs. conservative).
 - The **📊 Comparison** tab shows all models side-by-side with charts and a downloadable table.
-- **ROI (Net)** = Net Revenue / Total Funnel CAC
+- **ROI (Net)** = Net Revenue / Total Funnel CAC + Platform Costs
+- **Net Profit** = Net Revenue − Total Funnel CAC − Platform Costs
 - **Net Revenue** = Gross Revenue × (1 − Discount)
 """)
