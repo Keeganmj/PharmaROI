@@ -534,7 +534,7 @@ for model_idx, model_tab in enumerate(tabs[:-1]):
         st.markdown(f"<div style='border-left: 4px solid {tab_color}; padding-left: 12px; margin-bottom: 8px;'><strong style='font-size:1.1rem'>{model_name}</strong></div>", unsafe_allow_html=True)
 
         roi = fin["roi_net"]
-        k1, k2, k3, k4, k5, k6 = st.columns(5)
+        k1, k2, k3, k4, k5, k6 = st.columns(6)
         k1.metric("ROI (Net)", roix(roi) if roi == roi else "—")
         k2.metric("Treated Patients", number(fin["treated_patients"]))
         k3.metric("Net Revenue", money(fin["net_revenue"]))
