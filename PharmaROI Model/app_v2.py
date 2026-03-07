@@ -70,6 +70,13 @@ SPONSOR_DEFAULTS = {
     "discount": 0.68,
     "stage_active": [True] * len(STAGE_NAMES),
     "stage_names": STAGE_NAMES[:],
+    "platform_costs": {
+        "dario_connect_config": 500_000.0,
+        "dario_care_config": 500_000.0,
+        "sub_dario_connect": 1_000_000.0,
+        "sub_dario_care": 250_000.0,
+        "maintenance_support": 250_000.0,
+    },
 }
 
 ZERO_SAMPLE = {
@@ -81,6 +88,13 @@ ZERO_SAMPLE = {
     "discount": 0.0,
     "stage_active": [True] * len(STAGE_NAMES),
     "stage_names": ["Insert Stage Name"] * len(STAGE_NAMES),
+    "platform_costs": {
+        "dario_connect_config": 0.0,
+        "dario_care_config": 0.0,
+        "sub_dario_connect": 0.0,
+        "sub_dario_care": 0.0,
+        "maintenance_support": 0.0,
+    },
 }
 
 
@@ -127,7 +141,7 @@ class StageResult:
 def compute_funnel(stages: List[StageInput], base_population: float) -> List[StageResult]:
     results = []
     prev_patients = max(0.0, float(base_population))
-    cumulative = 0.0
+    total_cac_pool = 0.0
 
     for idx, s in enumerate(stages):
         if idx == 0:
@@ -137,9 +151,19 @@ def compute_funnel(stages: List[StageInput], base_population: float) -> List[Sta
             ratio_used = 1.0 if not s.active else clamp(s.ratio, 0.0, 1.0)
             patients = prev_patients * ratio_used
 
-        cac_pp = 0.0 if not s.active else max(0.0, float(s.cac))
-        stage_cac = patients * cac_pp
-        cumulative += stage_cac
+        if idx < 5:
+            cac_pp = 0.0
+            stage_cac = 0.0
+            cumulative = 0.0
+        elif idx == 5:
+            cac_pp = 0.0 if not s.active else max(0.0, float(s.cac))
+            stage_cac = patients * cac_pp
+            total_cac_pool = stage_cac
+            cumulative = total_cac_pool
+        else:
+            cumulative = total_cac_pool
+            cac_pp = (total_cac_pool / patients) if patients > 0 else 0.0
+            stage_cac = cac_pp * patients
 
         results.append(StageResult(
             name=s.name, active=s.active, ratio_used=ratio_used,
@@ -151,16 +175,18 @@ def compute_funnel(stages: List[StageInput], base_population: float) -> List[Sta
     return results
 
 
-def compute_financials(treated_patients, arpp, treatment_years, discount, funnel_cac_total):
+def compute_financials(treated_patients, arpp, treatment_years, discount, funnel_cac_total, platform_costs=0.0):
     treated = max(0.0, float(treated_patients))
     arpp = max(0.0, float(arpp))
     years = max(0.0, float(treatment_years))
-    disc = clamp(discount, 0.0, 0.80)
+    disc = clamp(discount, 0.0, 1.0)
     funnel_cac = max(0.0, float(funnel_cac_total))
+    platform = max(0.0, float(platform_costs))
 
     gross = treated * arpp * years
     net = gross * (1.0 - disc)
-    roi = (net / funnel_cac) if funnel_cac > 0 else float("nan")
+    net_profit = net - funnel_cac - platform
+    roi = (net / (funnel_cac + platform)) if (funnel_cac + platform) > 0 else float("nan")
 
     return {
         "treated_patients": treated,
@@ -168,13 +194,13 @@ def compute_financials(treated_patients, arpp, treatment_years, discount, funnel
         "net_revenue": net,
         "discount": disc,
         "funnel_cac_total": funnel_cac,
-        "net_profit": net,
+        "platform_costs_total": platform,
+        "net_profit": net_profit,
         "roi_net": roi,
     }
 
 
 def run_model(state: dict):
-    """Given a model state dict, return (funnel_results, fin)."""
     stage_names = state.get("stage_names", STAGE_NAMES)
     stages = []
     for idx, name in enumerate(stage_names):
@@ -186,15 +212,16 @@ def run_model(state: dict):
         ))
     base_pop = float(state["base_population"])
     funnel_results = compute_funnel(stages, base_pop)
+    platform_costs = sum(state.get("platform_costs", {}).values())
     fin = compute_financials(
         treated_patients=funnel_results[-1].patients,
         arpp=float(state["arpp"]),
         treatment_years=float(state["treatment_years"]),
         discount=float(state["discount"]),
         funnel_cac_total=funnel_results[-1].cumulative_cac,
+        platform_costs=platform_costs,
     )
     return funnel_results, fin
-
 
 # -----------------------------
 # Excel export
@@ -474,14 +501,31 @@ for model_idx, model_tab in enumerate(tabs[:-1]):
                             disabled=disabled,
                             key=f"ratio_{model_idx}_{sidx}",
                         )
-                    disabled = not state["stage_active"][sidx]
-                    state["cac"][sidx] = st.number_input(
-                        "CAC ($ per patient)",
-                        min_value=0.0, step=1.0,
-                        value=float(state["cac"][sidx]),
-                        disabled=disabled,
-                        key=f"cac_{model_idx}_{sidx}",
-                    )
+                    if sidx <= 5:
+                        disabled = not state["stage_active"][sidx]
+                        state["cac"][sidx] = st.number_input(
+                            "CAC ($ per patient)",
+                            min_value=0.0, step=1.0,
+                            value=float(state["cac"][sidx]),
+                            disabled=disabled,
+                            key=f"cac_{model_idx}_{sidx}",
+                        )
+                    else:
+                        st.caption("CAC auto-calculated from Stage 6")
+
+            st.markdown("**Platform Costs**")
+            if "platform_costs" not in state:
+                state["platform_costs"] = SPONSOR_DEFAULTS["platform_costs"].copy()
+            pc = state["platform_costs"]
+            pc_col1, pc_col2 = st.columns(2)
+            with pc_col1:
+                pc["dario_connect_config"] = st.number_input("Dario Connect Configuration", min_value=0.0, step=10_000.0, value=float(pc["dario_connect_config"]), key=f"dcc_{model_idx}")
+                pc["dario_care_config"] = st.number_input("Dario Care Configuration", min_value=0.0, step=10_000.0, value=float(pc["dario_care_config"]), key=f"dcarec_{model_idx}")
+                pc["sub_dario_connect"] = st.number_input("Subscription — Dario Connect", min_value=0.0, step=10_000.0, value=float(pc["sub_dario_connect"]), key=f"sdc_{model_idx}")
+            with pc_col2:
+                pc["sub_dario_care"] = st.number_input("Subscription — Dario Care", min_value=0.0, step=10_000.0, value=float(pc["sub_dario_care"]), key=f"sdcare_{model_idx}")
+                pc["maintenance_support"] = st.number_input("Maintenance & Support", min_value=0.0, step=10_000.0, value=float(pc["maintenance_support"]), key=f"ms_{model_idx}")
+            st.caption(f"Total Platform Costs: {money(sum(pc.values()))}")        
 
         # ----- Compute -----
         funnel_results, fin = run_model(state)
