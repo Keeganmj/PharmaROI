@@ -5,24 +5,23 @@
 from __future__ import annotations
 
 import copy
-from dataclasses import dataclass
-from pathlib import Path
-from typing import Any, Dict, List, Optional
-
-from openpyxl import Workbook
-from openpyxl.styles import Font, PatternFill, Alignment
-from openpyxl.utils import get_column_letter
-from openpyxl.chart import BarChart, Reference
-
 import io
+from dataclasses import dataclass
+from typing import List
 
 import streamlit as st
-import altair as alt
 
 try:
     import pandas as pd
 except Exception:
     pd = None
+
+import plotly.express as px
+import plotly.graph_objects as go
+
+from openpyxl import Workbook
+from openpyxl.styles import Font, PatternFill, Alignment
+from openpyxl.utils import get_column_letter
 
 # -----------------------------
 # Color palette
@@ -97,7 +96,6 @@ ZERO_SAMPLE = {
     },
 }
 
-
 # -----------------------------
 # Formatting helpers
 # -----------------------------
@@ -115,7 +113,6 @@ def pct(x):
 
 def roix(x):
     return f"{x:,.2f}x"
-
 
 # -----------------------------
 # Core computations
@@ -224,7 +221,310 @@ def run_model(state: dict):
     return funnel_results, fin
 
 # -----------------------------
-# Excel export
+# Monthly ROI helper
+# -----------------------------
+def build_monthly_roi_df(fin: dict, state: dict):
+    """
+    Lightweight monthly view for graphing only.
+    Assumption:
+    - Net revenue is recognized evenly across treatment_years
+    - Funnel CAC + platform costs are treated as upfront costs in Month 1
+    """
+    months = max(1, int(round(float(state["treatment_years"]) * 12)))
+    total_cost = float(fin["funnel_cac_total"] + fin["platform_costs_total"])
+    monthly_net_revenue = float(fin["net_revenue"]) / months if months > 0 else 0.0
+
+    rows = []
+    cumulative_revenue = 0.0
+    cumulative_cost = 0.0
+    cumulative_profit = 0.0
+
+    for month in range(1, months + 1):
+        revenue = monthly_net_revenue
+        cost = total_cost if month == 1 else 0.0
+
+        cumulative_revenue += revenue
+        cumulative_cost += cost
+        cumulative_profit = cumulative_revenue - cumulative_cost
+
+        rows.append({
+            "Month": month,
+            "Monthly Net Revenue": revenue,
+            "Monthly Cost": cost,
+            "Cumulative Net Revenue": cumulative_revenue,
+            "Cumulative Cost": cumulative_cost,
+            "Cumulative Profit": cumulative_profit,
+        })
+
+    if pd is not None:
+        df = pd.DataFrame(rows)
+        payback_month = None
+        positive = df[df["Cumulative Profit"] >= 0]
+        if not positive.empty:
+            payback_month = int(positive.iloc[0]["Month"])
+        return df, payback_month
+
+    return rows, None
+
+# -----------------------------
+# Sensitivity helper
+# -----------------------------
+def build_roi_sensitivity_df(state: dict, shock: float = 0.10):
+    if pd is None:
+        return None
+
+    _, base_fin = run_model(copy.deepcopy(state))
+    base_roi = base_fin["roi_net"]
+
+    variables = [
+        ("Base Population", ("scalar", "base_population")),
+        ("ARPP", ("scalar", "arpp")),
+        ("Discount", ("scalar", "discount")),
+        ("Stage 2 Ratio", ("ratio", 1)),
+        ("Stage 3 Ratio", ("ratio", 2)),
+        ("Stage 4 Ratio", ("ratio", 3)),
+        ("Stage 5 Ratio", ("ratio", 4)),
+        ("Stage 6 Ratio", ("ratio", 5)),
+        ("Final Stage Ratio", ("ratio", len(STAGE_NAMES) - 1)),
+        ("Stage 6 CAC", ("cac", 5)),
+        ("Platform Costs", ("platform_total", None)),
+    ]
+
+    rows = []
+
+    for label, spec in variables:
+        kind, key = spec
+        low_state = copy.deepcopy(state)
+        high_state = copy.deepcopy(state)
+
+        if kind == "scalar":
+            if key == "discount":
+                low_state[key] = clamp(float(low_state[key]) * (1 - shock), 0.0, 1.0)
+                high_state[key] = clamp(float(high_state[key]) * (1 + shock), 0.0, 1.0)
+            else:
+                low_state[key] = max(0.0, float(low_state[key]) * (1 - shock))
+                high_state[key] = max(0.0, float(high_state[key]) * (1 + shock))
+
+        elif kind == "ratio":
+            idx = key
+            low_state["ratios"][idx] = clamp(float(low_state["ratios"][idx]) * (1 - shock), 0.0, 1.0)
+            high_state["ratios"][idx] = clamp(float(high_state["ratios"][idx]) * (1 + shock), 0.0, 1.0)
+
+        elif kind == "cac":
+            idx = key
+            low_state["cac"][idx] = max(0.0, float(low_state["cac"][idx]) * (1 - shock))
+            high_state["cac"][idx] = max(0.0, float(high_state["cac"][idx]) * (1 + shock))
+
+        elif kind == "platform_total":
+            for cost_key in low_state["platform_costs"]:
+                low_state["platform_costs"][cost_key] = max(0.0, float(low_state["platform_costs"][cost_key]) * (1 - shock))
+                high_state["platform_costs"][cost_key] = max(0.0, float(high_state["platform_costs"][cost_key]) * (1 + shock))
+
+        _, low_fin = run_model(low_state)
+        _, high_fin = run_model(high_state)
+
+        low_delta = low_fin["roi_net"] - base_roi if (low_fin["roi_net"] == low_fin["roi_net"] and base_roi == base_roi) else 0.0
+        high_delta = high_fin["roi_net"] - base_roi if (high_fin["roi_net"] == high_fin["roi_net"] and base_roi == base_roi) else 0.0
+
+        rows.append({
+            "Variable": label,
+            "Low Delta": low_delta,
+            "High Delta": high_delta,
+            "Abs Impact": max(abs(low_delta), abs(high_delta)),
+        })
+
+    return pd.DataFrame(rows).sort_values("Abs Impact", ascending=True)
+
+# -----------------------------
+# Plotly chart helpers
+# -----------------------------
+def plotly_waterfall(fin):
+    gross = fin["gross_revenue"]
+    discount_amount = fin["gross_revenue"] - fin["net_revenue"]
+    net_revenue = fin["net_revenue"]
+    funnel_cac = fin["funnel_cac_total"]
+    platform_costs = fin["platform_costs_total"]
+    net_profit = fin["net_profit"]
+
+    fig = go.Figure(go.Waterfall(
+        name="Financial Bridge",
+        orientation="v",
+        measure=["relative", "relative", "total", "relative", "relative", "total"],
+        x=["Gross Revenue", "Discount", "Net Revenue", "Funnel CAC", "Platform Costs", "Net Profit"],
+        text=[money(gross), f"-{money(discount_amount)}", money(net_revenue), f"-{money(funnel_cac)}", f"-{money(platform_costs)}", money(net_profit)],
+        textposition="outside",
+        y=[gross, -discount_amount, 0, -funnel_cac, -platform_costs, 0],
+        connector={"line": {"color": COLORS["muted"]}},
+        increasing={"marker": {"color": COLORS["revenue"]}},
+        decreasing={"marker": {"color": COLORS["danger"]}},
+        totals={"marker": {"color": COLORS["profit"]}},
+    ))
+    fig.update_layout(height=420, margin=dict(l=10, r=10, t=40, b=10), showlegend=False, yaxis_title="USD")
+    return fig
+
+def plotly_sensitivity_tornado(sdf, shock: float = 0.10):
+    fig = go.Figure()
+    fig.add_trace(go.Bar(
+        y=sdf["Variable"], x=sdf["Low Delta"], orientation="h",
+        name=f"-{int(shock*100)}%", marker_color=COLORS["danger"],
+        hovertemplate="%{y}<br>ROI change: %{x:.2f}x<extra></extra>",
+    ))
+    fig.add_trace(go.Bar(
+        y=sdf["Variable"], x=sdf["High Delta"], orientation="h",
+        name=f"+{int(shock*100)}%", marker_color=COLORS["profit"],
+        hovertemplate="%{y}<br>ROI change: %{x:.2f}x<extra></extra>",
+    ))
+    fig.add_vline(x=0, line_width=1, line_color=COLORS["muted"])
+    fig.update_layout(
+        height=420, margin=dict(l=10, r=10, t=40, b=10),
+        barmode="overlay", xaxis_title="Change in ROI (x)", yaxis_title=None,
+        legend_title=None, hovermode="y unified",
+    )
+    return fig
+
+def plotly_monthly_roi(df_monthly, payback_month=None):
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(
+        x=df_monthly["Month"], y=df_monthly["Cumulative Net Revenue"],
+        mode="lines+markers", name="Cumulative Net Revenue",
+        line=dict(color=COLORS["revenue"], width=3),
+    ))
+    fig.add_trace(go.Scatter(
+        x=df_monthly["Month"], y=df_monthly["Cumulative Cost"],
+        mode="lines+markers", name="Cumulative Cost",
+        line=dict(color=COLORS["danger"], width=3, dash="dash"),
+    ))
+    fig.add_trace(go.Scatter(
+        x=df_monthly["Month"], y=df_monthly["Cumulative Profit"],
+        mode="lines+markers", name="Cumulative Profit",
+        line=dict(color=COLORS["profit"], width=3),
+    ))
+    if payback_month is not None:
+        payback_value = df_monthly.loc[df_monthly["Month"] == payback_month, "Cumulative Profit"].iloc[0]
+        fig.add_vline(x=payback_month, line_width=2, line_dash="dot", line_color=COLORS["warning"])
+        fig.add_annotation(x=payback_month, y=payback_value, text=f"Payback Month: {payback_month}", showarrow=True, arrowhead=2, yshift=20)
+
+    fig.update_layout(
+        height=420, margin=dict(l=10, r=10, t=40, b=10),
+        xaxis_title="Month", yaxis_title="USD", legend_title=None, hovermode="x unified",
+    )
+    return fig
+
+def plotly_funnel_patients(df_funnel, tab_color):
+    fig = px.bar(df_funnel, x="Patients", y="Stage", orientation="h", text="Patients")
+    fig.update_traces(marker_color=tab_color, texttemplate="%{text:,.0f}", textposition="outside", cliponaxis=False)
+    fig.update_layout(
+        height=500, margin=dict(l=10, r=40, t=40, b=10),
+        xaxis_title="Patients", yaxis_title=None, showlegend=False,
+    )
+    fig.update_yaxes(categoryorder="array", categoryarray=list(df_funnel["Stage"])[::-1])
+    return fig
+
+def plotly_comparison_bar(comp_df, y_col, title, y_title, color_map):
+    fig = px.bar(comp_df, x="Model", y=y_col, color="Model", color_discrete_map=color_map, text=y_col)
+    if "ROI" in y_col:
+        fig.update_traces(texttemplate="%{text:.2f}x", textposition="outside")
+    elif "Discount" in y_col:
+        fig.update_traces(texttemplate="%{text:.1%}", textposition="outside")
+    elif "Patients" in y_col:
+        fig.update_traces(texttemplate="%{text:,.0f}", textposition="outside")
+    else:
+        fig.update_traces(texttemplate="$%{text:,.0f}", textposition="outside")
+
+    fig.update_layout(
+        title=title, height=320, margin=dict(l=10, r=10, t=55, b=10),
+        xaxis_title=None, yaxis_title=y_title, showlegend=False,
+    )
+    return fig
+
+def plotly_roi_vs_treated(comp_df, color_map):
+    fig = px.scatter(
+        comp_df,
+        x="Treated Patients",
+        y="ROI (Net)",
+        color="Model",
+        color_discrete_map=color_map,
+        hover_name="Model",
+        hover_data={
+            "Treated Patients": ":,.0f",
+            "Net Revenue": ":,.0f",
+            "Total Cost": ":,.0f",
+            "Net Profit": ":,.0f",
+            "ROI (Net)": ":.2f",
+            "Model": False,
+        },
+        text="Model",
+    )
+    fig.update_traces(marker=dict(size=16, line=dict(width=1, color="white")), textposition="top center")
+    fig.update_layout(
+        height=390, margin=dict(l=10, r=10, t=50, b=10),
+        xaxis_title="Treated Patients", yaxis_title="ROI (x)", legend_title=None,
+    )
+    return fig
+
+def plotly_net_profit_bar(comp_df, color_map):
+    fig = px.bar(comp_df, x="Model", y="Net Profit", color="Model", color_discrete_map=color_map, text="Net Profit")
+    fig.update_traces(texttemplate="$%{text:,.0f}", textposition="outside")
+    fig.update_layout(
+        height=360, margin=dict(l=10, r=10, t=50, b=10),
+        xaxis_title=None, yaxis_title="Net Profit", showlegend=False,
+    )
+    return fig
+
+def build_driver_index_df(comp_df, metrics, label_map):
+    rows = []
+    for metric in metrics:
+        avg_val = comp_df[metric].mean()
+        for _, row in comp_df.iterrows():
+            indexed = (row[metric] / avg_val * 100.0) if avg_val and avg_val == avg_val else 0.0
+            rows.append({
+                "Model": row["Model"],
+                "Metric": label_map.get(metric, metric),
+                "Indexed Value": indexed,
+            })
+    return pd.DataFrame(rows)
+
+def plotly_driver_index(driver_df, color_map, title):
+    fig = px.bar(
+        driver_df, x="Metric", y="Indexed Value", color="Model",
+        barmode="group", color_discrete_map=color_map, text="Indexed Value"
+    )
+    fig.update_traces(texttemplate="%{text:.0f}", textposition="outside")
+    fig.update_layout(
+        title=title, height=380, margin=dict(l=10, r=10, t=55, b=10),
+        xaxis_title=None, yaxis_title="Index (100 = selected-model average)",
+        legend_title=None,
+    )
+    fig.add_hline(y=100, line_dash="dot", line_color=COLORS["muted"])
+    return fig
+
+def plotly_roi_vs_total_cost(comp_df, color_map):
+    fig = px.scatter(
+        comp_df,
+        x="Total Cost",
+        y="ROI (Net)",
+        color="Model",
+        color_discrete_map=color_map,
+        hover_name="Model",
+        hover_data={
+            "Treated Patients": ":,.0f",
+            "Net Revenue": ":,.0f",
+            "Total Cost": ":,.0f",
+            "Net Profit": ":,.0f",
+            "ROI (Net)": ":.2f",
+            "Model": False,
+        },
+        text="Model",
+    )
+    fig.update_traces(marker=dict(size=16, line=dict(width=1, color="white")), textposition="top center")
+    fig.update_layout(
+        height=390, margin=dict(l=10, r=10, t=50, b=10),
+        xaxis_title="Total Investment", yaxis_title="ROI (x)", legend_title=None,
+    )
+    return fig
+
+# -----------------------------
+# Excel export helpers
 # -----------------------------
 def build_polished_excel_report(df_funnel, fin, colors):
     wb = Workbook()
@@ -257,6 +557,7 @@ def build_polished_excel_report(df_funnel, fin, colors):
         ("Discount", fin["discount"], "0.0%"),
         ("Net Revenue", fin["net_revenue"], "$#,##0"),
         ("Funnel CAC Total", fin["funnel_cac_total"], "$#,##0"),
+        ("Platform Costs", fin["platform_costs_total"], "$#,##0"),
         ("Net Profit", fin["net_profit"], "$#,##0"),
         ("ROI (Net)", fin["roi_net"], "0.00x"),
     ]
@@ -271,7 +572,7 @@ def build_polished_excel_report(df_funnel, fin, colors):
         ws_sum[f"B{r}"] = float(value) if value == value else None
         ws_sum[f"C{r}"] = fmt
         ws_sum[f"D{r}"] = ""
-        ws_sum[f"A{r}"].font = bold_font if label in ("Net Revenue", "ROI (Net)") else Font()
+        ws_sum[f"A{r}"].font = bold_font if label in ("Net Revenue", "ROI (Net)", "Net Profit") else Font()
         ws_sum[f"A{r}"].alignment = left
         ws_sum[f"B{r}"].alignment = left
         ws_sum[f"C{r}"].font = muted_font
@@ -311,6 +612,33 @@ def build_polished_excel_report(df_funnel, fin, colors):
     buffer.seek(0)
     return buffer.getvalue()
 
+def build_simple_excel(df, sheet_name="Data"):
+    wb = Workbook()
+    ws = wb.active
+    ws.title = sheet_name[:31]
+
+    header_fill = PatternFill("solid", fgColor="0F172A")
+    header_font = Font(bold=True, color="FFFFFF")
+    center = Alignment(horizontal="center", vertical="center")
+
+    for col_idx, col_name in enumerate(df.columns, start=1):
+        cell = ws.cell(row=1, column=col_idx, value=col_name)
+        cell.fill = header_fill
+        cell.font = header_font
+        cell.alignment = center
+
+    for row_idx, row in enumerate(df.itertuples(index=False), start=2):
+        for col_idx, val in enumerate(row, start=1):
+            ws.cell(row=row_idx, column=col_idx, value=val)
+
+    for i, col in enumerate(df.columns, start=1):
+        max_len = max(len(str(col)), *(len(str(v)) for v in df[col].head(100).tolist())) if len(df) > 0 else len(str(col))
+        ws.column_dimensions[get_column_letter(i)].width = min(max(max_len + 2, 12), 28)
+
+    buffer = io.BytesIO()
+    wb.save(buffer)
+    buffer.seek(0)
+    return buffer.getvalue()
 
 # -----------------------------
 # Session state bootstrap
@@ -323,14 +651,12 @@ def init_session():
 
 init_session()
 
-
 # -----------------------------
-# Page config
+# Page title
 # -----------------------------
 st.set_page_config(page_title="PharmaROI V3 — Multi-Model", page_icon="📈", layout="wide")
 st.title("PharmaROI Intelligence — V3 (Multi-Model Comparison)")
 st.caption("Build multiple ROI models side-by-side and compare them in the Comparison tab.")
-
 
 # -----------------------------
 # Model management bar
@@ -351,7 +677,7 @@ with mgmt_col2:
         "Copy from:",
         options=range(len(copy_options)),
         format_func=lambda i: copy_options[i],
-        index=st.session_state["active_model_idx"],  # Defaults to current model
+        index=st.session_state["active_model_idx"],
         key="copy_source_select",
         label_visibility="collapsed",
     )
@@ -364,14 +690,12 @@ with mgmt_col2:
         st.session_state["active_model_idx"] = len(st.session_state["models"]) - 1
         st.rerun()
 
-
 with mgmt_col3:
     can_delete = len(st.session_state["models"]) > 1
-    
-    # Initialize confirmation state
+
     if "confirm_delete" not in st.session_state:
         st.session_state["confirm_delete"] = False
-    
+
     if not st.session_state["confirm_delete"]:
         if st.button("Delete Current", use_container_width=True, disabled=not can_delete):
             st.session_state["confirm_delete"] = True
@@ -392,9 +716,7 @@ with mgmt_col3:
                 st.session_state["confirm_delete"] = False
                 st.rerun()
 
-
 with mgmt_col4:
-    # Rename current model
     idx = st.session_state["active_model_idx"]
     new_name = st.text_input(
         "Rename current model:",
@@ -405,18 +727,12 @@ with mgmt_col4:
     )
     if new_name != st.session_state["model_names"][idx]:
         st.session_state["model_names"][idx] = new_name
-        
-
-
 
 # -----------------------------
-# Tabs: one per model + Comparison
+# Tabs
 # -----------------------------
 tab_labels = st.session_state["model_names"] + ["Comparison"]
 tabs = st.tabs(tab_labels)
-
-# Keep track of which tab is being viewed to set active_model_idx
-# (Streamlit tabs don't expose which is active, so we use a workaround via buttons in sidebar)
 
 for model_idx, model_tab in enumerate(tabs[:-1]):
     with model_tab:
@@ -424,8 +740,6 @@ for model_idx, model_tab in enumerate(tabs[:-1]):
         model_name = st.session_state["model_names"][model_idx]
         tab_color = TAB_PALETTE[model_idx % len(TAB_PALETTE)]
 
-        # When user clicks into this tab render its sidebar controls
-        # We render controls inline (above a divider) since each tab has its own scope
         with st.expander("Model Settings", expanded=(model_idx == st.session_state["active_model_idx"])):
             st.session_state["active_model_idx"] = model_idx
 
@@ -470,7 +784,7 @@ for model_idx, model_tab in enumerate(tabs[:-1]):
                     value=float(state["discount"]),
                     key=f"discount_{model_idx}",
                 )
-        
+
             st.markdown("**Funnel Stages**")
             stage_names = state.get("stage_names", STAGE_NAMES[:])
 
@@ -525,32 +839,34 @@ for model_idx, model_tab in enumerate(tabs[:-1]):
             with pc_col2:
                 pc["sub_dario_care"] = st.number_input("Subscription — Dario Care", min_value=0.0, step=10_000.0, value=float(pc["sub_dario_care"]), key=f"sdcare_{model_idx}")
                 pc["maintenance_support"] = st.number_input("Maintenance & Support", min_value=0.0, step=10_000.0, value=float(pc["maintenance_support"]), key=f"ms_{model_idx}")
-            st.caption(f"Total Platform Costs: {money(sum(pc.values()))}")        
+            st.caption(f"Total Platform Costs: {money(sum(pc.values()))}")
 
-        # ----- Compute -----
         funnel_results, fin = run_model(state)
+        sensitivity_df = build_roi_sensitivity_df(state, shock=0.10)
 
-        # ----- KPI strip -----
-        st.markdown(f"<div style='border-left: 4px solid {tab_color}; padding-left: 12px; margin-bottom: 8px;'><strong style='font-size:1.1rem'>{model_name}</strong></div>", unsafe_allow_html=True)
+        st.markdown(
+            f"<div style='border-left: 4px solid {tab_color}; padding-left: 12px; margin-bottom: 8px;'><strong style='font-size:1.1rem'>{model_name}</strong></div>",
+            unsafe_allow_html=True,
+        )
 
         roi = fin["roi_net"]
+        total_cost = fin["funnel_cac_total"] + fin["platform_costs_total"]
+
         k1, k2, k3, k4, k5, k6 = st.columns(6)
         k1.metric("ROI (Net)", roix(roi) if roi == roi else "—")
         k2.metric("Treated Patients", number(fin["treated_patients"]))
         k3.metric("Net Revenue", money(fin["net_revenue"]))
         k4.metric("Funnel CAC", money(fin["funnel_cac_total"]))
-        k5.metric("Total CAC", money(fin["funnel_cac_total"] + fin["platform_costs_total"]))
-        k6.metric("Net Profit", money(fin["net_revenue"] - fin["funnel_cac_total"] - fin["platform_costs_total"]))
-
+        k5.metric("Total Cost", money(total_cost))
+        k6.metric("Net Profit", money(fin["net_profit"]))
 
         st.markdown(
             f"Gross: **\\${fin['gross_revenue']:,.0f}**  |  "
             f"Discount: **{fin['discount']*100:.1f}%**  |  "
-            f"Discount Amount: **\\${fin['gross_revenue'] - fin['net_revenue']:,.0f}**  |  " 
-            f"Net Revenue per Rx: **\\${(float(state['arpp']) * (1 - fin['discount'])):,.0f}**"           
+            f"Discount Amount: **\\${fin['gross_revenue'] - fin['net_revenue']:,.0f}**  |  "
+            f"Net Revenue per Rx: **\\${(float(state['arpp']) * (1 - fin['discount'])):,.0f}**"
         )
 
-        # ----- Funnel table -----
         st.subheader("Funnel Table")
         table_rows = []
         for ridx, r in enumerate(funnel_results):
@@ -574,7 +890,6 @@ for model_idx, model_tab in enumerate(tabs[:-1]):
             df_display["Cumulative CAC ($)"] = df_display["Cumulative CAC ($)"].map(lambda x: f"${x:,.0f}")
             st.dataframe(df_display, use_container_width=True, hide_index=True)
 
-            # Export
             st.markdown("### Export")
             ec1, ec2 = st.columns(2)
             with ec1:
@@ -598,46 +913,24 @@ for model_idx, model_tab in enumerate(tabs[:-1]):
         else:
             st.write(table_rows)
 
-        # ----- Waterfall chart -----
-        st.subheader("Revenue Waterfall")
-        waterfall_data = [
-            {"Metric": "Gross Revenue", "Start": 0, "End": fin["gross_revenue"], "Type": "revenue", "Label": fin["gross_revenue"]},
-            {"Metric": "Discount", "Start": fin["net_revenue"], "End": fin["gross_revenue"], "Type": "negative", "Label": -(fin["gross_revenue"] - fin["net_revenue"])},
-            {"Metric": "Net Revenue", "Start": 0, "End": fin["net_revenue"], "Type": "subtotal", "Label": fin["net_revenue"]},
-        ]
-        color_scale = alt.Scale(
-            domain=["revenue", "negative", "subtotal"],
-            range=[COLORS["revenue"], COLORS["danger"], COLORS["primary"]],
-        )
-        if pd is not None:
-            wdf = pd.DataFrame(waterfall_data)
-            bars = alt.Chart(wdf).mark_bar(cornerRadiusTopLeft=4, cornerRadiusTopRight=4, size=80).encode(
-                x=alt.X("Metric:N", sort=None, title=None, axis=alt.Axis(labelAngle=0, labelFontSize=13)),
-                y=alt.Y("Start:Q", title="USD", axis=alt.Axis(format="$,.0f")),
-                y2=alt.Y2("End:Q"),
-                color=alt.Color("Type:N", scale=color_scale, legend=None),
-                tooltip=[alt.Tooltip("Metric:N"), alt.Tooltip("Label:Q", format="$,.0f", title="Value")],
-            )
-            text = alt.Chart(wdf).mark_text(dy=-10, fontSize=12, fontWeight="bold").encode(
-                x=alt.X("Metric:N", sort=None),
-                y=alt.Y("End:Q"),
-                text=alt.Text("Label:Q", format="$,.0f"),
-                color=alt.Color("Type:N", scale=color_scale, legend=None),
-            )
-            st.altair_chart((bars + text).properties(height=400), use_container_width=True)
+        st.subheader("Visuals")
+        chart_row1_col1, chart_row1_col2 = st.columns(2)
 
-        # ----- Funnel visualization -----
-        with st.expander("Funnel Visualization"):
+        with chart_row1_col1:
+            st.markdown("**Revenue / Cost / Profit Waterfall**")
+            st.plotly_chart(plotly_waterfall(fin), use_container_width=True)
+
+        with chart_row1_col2:
+            st.markdown("**ROI Sensitivity**")
+            if pd is not None and sensitivity_df is not None:
+                st.plotly_chart(plotly_sensitivity_tornado(sensitivity_df, shock=0.10), use_container_width=True)
+            else:
+                st.info("Sensitivity chart requires pandas.")
+
+        with st.expander("Funnel Visualization", expanded=True):
             if pd is not None:
-                fdf = pd.DataFrame([{"Stage": r.name, "Patients": r.patients} for r in funnel_results])
-                fchart = alt.Chart(fdf).mark_bar().encode(
-                    y=alt.Y("Stage:N", sort="-x", title=None),
-                    x=alt.X("Patients:Q", title="Patients"),
-                    color=alt.value(tab_color),
-                    tooltip=[alt.Tooltip("Patients:Q", format=",.0f"), "Stage:N"],
-                )
-                st.altair_chart(fchart, use_container_width=True)
-
+                funnel_chart_df = pd.DataFrame([{"Stage": r.name, "Patients": r.patients} for r in funnel_results])
+                st.plotly_chart(plotly_funnel_patients(funnel_chart_df, tab_color), use_container_width=True)
 
 # -----------------------------
 # Comparison Tab
@@ -648,7 +941,6 @@ with tabs[-1]:
     if len(st.session_state["models"]) < 2:
         st.info("Add at least 2 models to compare them here.")
     else:
-        # Model selection filter
         st.markdown("**Select models to compare:**")
         selected_model_names = st.multiselect(
             "Choose models",
@@ -657,34 +949,47 @@ with tabs[-1]:
             key="comparison_model_select",
             label_visibility="collapsed",
         )
-        
+
         if len(selected_model_names) < 2:
             st.warning("Please select at least 2 models to compare.")
             st.stop()
-        
-        # Filter to selected models only
+
         selected_indices = [i for i, name in enumerate(st.session_state["model_names"]) if name in selected_model_names]
         selected_models = [st.session_state["models"][i] for i in selected_indices]
         selected_names = [st.session_state["model_names"][i] for i in selected_indices]
-        
-        # Build comparison data
-        comparison_rows = []
-        for midx, (mstate, mname) in enumerate(zip(selected_models, selected_names)):
 
-            funnel_results, fin = run_model(mstate)
+        comparison_rows = []
+        monthly_rows = []
+
+        for mstate, mname in zip(selected_models, selected_names):
+            _, fin = run_model(mstate)
             roi = fin["roi_net"]
+            total_cost = fin["funnel_cac_total"] + fin["platform_costs_total"]
+
             comparison_rows.append({
                 "Model": mname,
                 "Treated Patients": fin["treated_patients"],
                 "Gross Revenue": fin["gross_revenue"],
                 "Net Revenue": fin["net_revenue"],
                 "Funnel CAC": fin["funnel_cac_total"],
+                "Platform Costs": fin["platform_costs_total"],
+                "Total Cost": total_cost,
+                "Net Profit": fin["net_profit"],
                 "Discount": fin["discount"],
+                "ARPP": float(mstate["arpp"]),
                 "ROI (Net)": roi if roi == roi else 0.0,
             })
 
+            if pd is not None:
+                monthly_df, _ = build_monthly_roi_df(fin, mstate)
+                monthly_copy = monthly_df.copy()
+                monthly_copy["Model"] = mname
+                monthly_rows.append(monthly_copy)
+
         if pd is not None:
             comp_df = pd.DataFrame(comparison_rows)
+
+            color_map = {name: TAB_PALETTE[i % len(TAB_PALETTE)] for i, name in enumerate(selected_names)}
 
             # Summary table
             st.markdown("### Key Metrics")
@@ -693,107 +998,178 @@ with tabs[-1]:
             disp["Gross Revenue"] = disp["Gross Revenue"].map(lambda x: f"${x:,.0f}")
             disp["Net Revenue"] = disp["Net Revenue"].map(lambda x: f"${x:,.0f}")
             disp["Funnel CAC"] = disp["Funnel CAC"].map(lambda x: f"${x:,.0f}")
+            disp["Platform Costs"] = disp["Platform Costs"].map(lambda x: f"${x:,.0f}")
+            disp["Total Cost"] = disp["Total Cost"].map(lambda x: f"${x:,.0f}")
+            disp["Net Profit"] = disp["Net Profit"].map(lambda x: f"${x:,.0f}")
             disp["Discount"] = disp["Discount"].map(lambda x: f"{x*100:.1f}%")
+            disp["ARPP"] = disp["ARPP"].map(lambda x: f"${x:,.0f}")
             disp["ROI (Net)"] = disp["ROI (Net)"].map(lambda x: f"{x:.2f}x")
             st.dataframe(disp, use_container_width=True, hide_index=True)
 
             st.markdown("### Charts")
             chart_col1, chart_col2 = st.columns(2)
 
-            model_color_scale = alt.Scale(
-                domain=selected_names,
-                range=TAB_PALETTE[:len(selected_names)],
-            )
-
-
             with chart_col1:
-                st.markdown("**ROI (Net)**")
-                roi_chart = alt.Chart(comp_df).mark_bar(cornerRadiusTopLeft=4, cornerRadiusTopRight=4).encode(
-                    x=alt.X("Model:N", title=None, axis=alt.Axis(labelAngle=-20)),
-                    y=alt.Y("ROI (Net):Q", title="ROI (x)"),
-                    color=alt.Color("Model:N", scale=model_color_scale, legend=None),
-                    tooltip=["Model:N", alt.Tooltip("ROI (Net):Q", format=".2f")],
+                st.plotly_chart(
+                    plotly_comparison_bar(comp_df, "ROI (Net)", "ROI (Net)", "ROI (x)", color_map),
+                    use_container_width=True,
                 )
-                st.altair_chart(roi_chart.properties(height=300), use_container_width=True)
 
             with chart_col2:
-                st.markdown("**Net Revenue**")
-                rev_chart = alt.Chart(comp_df).mark_bar(cornerRadiusTopLeft=4, cornerRadiusTopRight=4).encode(
-                    x=alt.X("Model:N", title=None, axis=alt.Axis(labelAngle=-20)),
-                    y=alt.Y("Net Revenue:Q", title="USD", axis=alt.Axis(format="$,.0f")),
-                    color=alt.Color("Model:N", scale=model_color_scale, legend=None),
-                    tooltip=["Model:N", alt.Tooltip("Net Revenue:Q", format="$,.0f")],
+                st.plotly_chart(
+                    plotly_comparison_bar(comp_df, "Net Revenue", "Net Revenue", "USD", color_map),
+                    use_container_width=True,
                 )
-                st.altair_chart(rev_chart.properties(height=300), use_container_width=True)
 
             chart_col3, chart_col4 = st.columns(2)
 
             with chart_col3:
-                st.markdown("**Treated Patients**")
-                pat_chart = alt.Chart(comp_df).mark_bar(cornerRadiusTopLeft=4, cornerRadiusTopRight=4).encode(
-                    x=alt.X("Model:N", title=None, axis=alt.Axis(labelAngle=-20)),
-                    y=alt.Y("Treated Patients:Q", title="Patients", axis=alt.Axis(format=",.0f")),
-                    color=alt.Color("Model:N", scale=model_color_scale, legend=None),
-                    tooltip=["Model:N", alt.Tooltip("Treated Patients:Q", format=",.0f")],
+                st.plotly_chart(
+                    plotly_comparison_bar(comp_df, "Treated Patients", "Treated Patients", "Patients", color_map),
+                    use_container_width=True,
                 )
-                st.altair_chart(pat_chart.properties(height=300), use_container_width=True)
 
             with chart_col4:
-                st.markdown("**Funnel CAC Total**")
-                cac_chart = alt.Chart(comp_df).mark_bar(cornerRadiusTopLeft=4, cornerRadiusTopRight=4).encode(
-                    x=alt.X("Model:N", title=None, axis=alt.Axis(labelAngle=-20)),
-                    y=alt.Y("Funnel CAC:Q", title="USD", axis=alt.Axis(format="$,.0f")),
-                    color=alt.Color("Model:N", scale=model_color_scale, legend=None),
-                    tooltip=["Model:N", alt.Tooltip("Funnel CAC:Q", format="$,.0f")],
+                st.plotly_chart(
+                    plotly_comparison_bar(comp_df, "Total Cost", "Total Cost", "USD", color_map),
+                    use_container_width=True,
                 )
-                st.altair_chart(cac_chart.properties(height=300), use_container_width=True)
 
-            # Stage-level patient comparison
-            st.markdown("### Funnel Stage Comparison (Patients)")
-            stage_rows = []
-            for midx, (mstate, mname) in enumerate(zip(selected_models, selected_names)):
+            # Monthly ROI comparison line — unchanged
+            if monthly_rows:
+                st.markdown("### Monthly ROI Comparison")
+                monthly_comp_df = pd.concat(monthly_rows, ignore_index=True)
 
-                fr, _ = run_model(mstate)
-                for r in fr:
-                    stage_rows.append({"Model": mname, "Stage": r.name[:40] + ("…" if len(r.name) > 40 else ""), "Patients": r.patients})
+                fig_monthly_comp = px.line(
+                    monthly_comp_df,
+                    x="Month",
+                    y="Cumulative Profit",
+                    color="Model",
+                    markers=True,
+                    color_discrete_map=color_map,
+                )
+                fig_monthly_comp.update_layout(
+                    height=380,
+                    margin=dict(l=10, r=10, t=40, b=10),
+                    xaxis_title="Month",
+                    yaxis_title="Cumulative Profit",
+                    hovermode="x unified",
+                    legend_title=None,
+                )
+                st.plotly_chart(fig_monthly_comp, use_container_width=True)
 
-            stage_df = pd.DataFrame(stage_rows)
-            stage_chart = alt.Chart(stage_df).mark_line(point=True).encode(
-                x=alt.X("Stage:N", sort=None, title=None, axis=alt.Axis(labelAngle=-35, labelLimit=200)),
-                y=alt.Y("Patients:Q", title="Patients", axis=alt.Axis(format=",.0f")),
-                color=alt.Color("Model:N", scale=model_color_scale),
-                tooltip=["Model:N", "Stage:N", alt.Tooltip("Patients:Q", format=",.0f")],
-            ).properties(height=350)
-            st.altair_chart(stage_chart, use_container_width=True)
+            # ROI Insights
+            st.markdown("### ROI Insights")
 
-                        # Diff View between two models
+            # ROI vs Patient Impact
+            st.markdown("#### ROI vs Patient Impact")
+            st.caption("Compares scenario efficiency and patient impact on the same view.")
+            roi_vs_patient_df = comp_df[["Model", "Treated Patients", "Net Revenue", "Total Cost", "Net Profit", "ROI (Net)"]].copy()
+            st.plotly_chart(plotly_roi_vs_treated(comp_df, color_map), use_container_width=True)
+            st.download_button(
+                "Download Data (Excel)",
+                data=build_simple_excel(roi_vs_patient_df, "ROI vs Patient Impact"),
+                file_name="roi_vs_patient_impact.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                key="dl_roi_vs_patient_impact",
+            )
+
+            # Net Profit by Scenario
+            st.markdown("#### Net Profit by Scenario")
+            st.caption("Shows absolute financial value after funnel and platform costs are applied.")
+            net_profit_df = comp_df[["Model", "Net Profit", "Net Revenue", "Total Cost", "ROI (Net)"]].copy()
+            st.plotly_chart(plotly_net_profit_bar(comp_df, color_map), use_container_width=True)
+            st.download_button(
+                "Download Data (Excel)",
+                data=build_simple_excel(net_profit_df, "Net Profit by Scenario"),
+                file_name="net_profit_by_scenario.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                key="dl_net_profit_by_scenario",
+            )
+
+            # Key Financial Drivers Comparison
+            st.markdown("#### Key Financial Drivers Comparison")
+            st.caption("Compares major revenue and cost drivers relative to the average across the selected models.")
+            revenue_metrics = ["ARPP", "Discount", "Treated Patients"]
+            revenue_label_map = {"ARPP": "ARPP", "Discount": "Discount", "Treated Patients": "Treated Patients"}
+            cost_metrics = ["Funnel CAC", "Platform Costs", "Total Cost"]
+            cost_label_map = {"Funnel CAC": "Funnel CAC", "Platform Costs": "Platform Costs", "Total Cost": "Total Cost"}
+
+            revenue_driver_df = build_driver_index_df(comp_df, revenue_metrics, revenue_label_map)
+            cost_driver_df = build_driver_index_df(comp_df, cost_metrics, cost_label_map)
+            driver_export_df = pd.concat([
+                revenue_driver_df.assign(Section="Revenue Drivers"),
+                cost_driver_df.assign(Section="Cost Drivers"),
+            ], ignore_index=True)[["Section", "Model", "Metric", "Indexed Value"]]
+
+            st.download_button(
+                "Download Data (Excel)",
+                data=build_simple_excel(driver_export_df, "Financial Drivers"),
+                file_name="financial_driver_comparison.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                key="dl_financial_driver_comparison",
+            )
+
+            d1, d2 = st.columns(2)
+
+            with d1:
+                st.markdown("##### Revenue Drivers")
+                st.plotly_chart(
+                    plotly_driver_index(revenue_driver_df, color_map, "Revenue Drivers"),
+                    use_container_width=True,
+                )
+                st.download_button(
+                    "Download Data (Excel)",
+                    data=build_simple_excel(revenue_driver_df, "Revenue Drivers"),
+                    file_name="revenue_drivers.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    key="dl_revenue_drivers",
+                )
+
+            with d2:
+                st.markdown("##### Cost Drivers")
+                st.plotly_chart(
+                    plotly_driver_index(cost_driver_df, color_map, "Cost Drivers"),
+                    use_container_width=True,
+                )
+                st.download_button(
+                    "Download Data (Excel)",
+                    data=build_simple_excel(cost_driver_df, "Cost Drivers"),
+                    file_name="cost_drivers.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    key="dl_cost_drivers",
+                )
+
+            # ROI vs Total Investment
+            st.markdown("#### ROI vs Total Investment")
+            st.caption("Shows how efficiently each scenario converts total investment into ROI.")
+            roi_vs_investment_df = comp_df[["Model", "Total Cost", "Treated Patients", "Net Revenue", "Net Profit", "ROI (Net)"]].copy()
+            st.plotly_chart(plotly_roi_vs_total_cost(comp_df, color_map), use_container_width=True)
+            st.download_button(
+                "Download Data (Excel)",
+                data=build_simple_excel(roi_vs_investment_df, "ROI vs Total Investment"),
+                file_name="roi_vs_total_investment.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                key="dl_roi_vs_total_investment",
+            )
+
+            # Diff View
             st.markdown("### Model Diff View")
             if len(selected_names) >= 2:
                 diff_col1, diff_col2 = st.columns(2)
                 with diff_col1:
-                    diff_model_a = st.selectbox(
-                        "Model A:",
-                        options=selected_names,
-                        index=0,
-                        key="diff_model_a",
-                    )
+                    diff_model_a = st.selectbox("Model A:", options=selected_names, index=0, key="diff_model_a")
                 with diff_col2:
                     remaining = [n for n in selected_names if n != diff_model_a]
-                    diff_model_b = st.selectbox(
-                        "Model B:",
-                        options=remaining,
-                        index=0,
-                        key="diff_model_b",
-                    )
-                
+                    diff_model_b = st.selectbox("Model B:", options=remaining, index=0, key="diff_model_b")
+
                 idx_a = st.session_state["model_names"].index(diff_model_a)
                 idx_b = st.session_state["model_names"].index(diff_model_b)
                 state_a = st.session_state["models"][idx_a]
                 state_b = st.session_state["models"][idx_b]
-                
+
                 diff_rows = []
-                
-                # Compare top-level params
+
                 top_params = [
                     ("Base Population", "base_population", "{:,.0f}"),
                     ("ARPP", "arpp", "${:,.0f}"),
@@ -810,12 +1186,8 @@ with tabs[-1]:
                             f"{diff_model_b}": fmt.format(val_b),
                             "Difference": fmt.format(val_b - val_a) if "%" not in fmt else f"{(val_b - val_a)*100:+.1f}pp",
                         })
-                
-                # Compare stage ratios and CAC
-                stage_names_a = state_a.get("stage_names", STAGE_NAMES)
+
                 for sidx in range(len(STAGE_NAMES)):
-                    stage_label = stage_names_a[sidx][:30] + ("..." if len(stage_names_a[sidx]) > 30 else "")
-                    
                     ratio_a = state_a["ratios"][sidx]
                     ratio_b = state_b["ratios"][sidx]
                     if ratio_a != ratio_b and sidx > 0:
@@ -825,7 +1197,7 @@ with tabs[-1]:
                             f"{diff_model_b}": f"{ratio_b:.1%}",
                             "Difference": f"{(ratio_b - ratio_a)*100:+.1f}pp",
                         })
-                    
+
                     cac_a = state_a["cac"][sidx]
                     cac_b = state_b["cac"][sidx]
                     if cac_a != cac_b:
@@ -835,7 +1207,7 @@ with tabs[-1]:
                             f"{diff_model_b}": f"${cac_b:,.0f}",
                             "Difference": f"${cac_b - cac_a:+,.0f}",
                         })
-                
+
                 if diff_rows:
                     diff_df = pd.DataFrame(diff_rows)
                     st.dataframe(diff_df, use_container_width=True, hide_index=True)
@@ -844,8 +1216,7 @@ with tabs[-1]:
             else:
                 st.info("Select at least 2 models above to see a diff view.")
 
-
-            # Download comparison
+            # Export Comparison
             st.markdown("### Export Comparison")
             comp_csv = comp_df.to_csv(index=False).encode("utf-8")
             st.download_button(
@@ -859,9 +1230,18 @@ st.divider()
 st.subheader("How to interpret")
 st.write("""
 - Each **model tab** is fully independent — tweak funnel stages, ratios, CAC, ARPP, and discount separately.
-- Use **Add New Model** or **Duplicate Current** to create variants (e.g. optimistic vs. conservative).
-- The **📊 Comparison** tab shows all models side-by-side with charts and a downloadable table.
-- **ROI (Net)** = Net Revenue / Total Funnel CAC + Platform Costs
-- **Net Profit** = Net Revenue − Total Funnel CAC − Platform Costs
+- Use **Add New Model** or **Duplicate Current** to create variants.
+- The **Comparison** tab shows all models side-by-side with charts and a downloadable table.
+- **ROI (Net)** = Net Revenue / (Funnel CAC + Platform Costs)
+- **Net Profit** = Net Revenue − Funnel CAC − Platform Costs
 - **Net Revenue** = Gross Revenue × (1 − Discount)
+
+**ROI Sensitivity assumption:**
+- Sensitivity uses one-at-a-time shocks of ±10% on selected variables.
+- It does not change the base model logic; it only reruns temporary copies of the model for graphing.
+- The bars show how much ROI (x) changes from the current base case.
+
+**Monthly ROI Comparison assumption:**
+- Net revenue is spread evenly across treatment duration months.
+- Funnel CAC and platform costs are treated as upfront Month 1 costs for that chart only.
 """)
