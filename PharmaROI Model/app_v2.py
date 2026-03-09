@@ -1,6 +1,6 @@
 # app.py
 # PharmaROI Intelligence — V3 (Multi-Model Comparison)
-# Run: streamlit run app.py
+# Run: streamlit run "PharmaROI Model/app_v2.py"
 
 from __future__ import annotations
 
@@ -605,7 +605,10 @@ def build_polished_excel_report(df_funnel, fin, colors):
     fmt_col("CAC ($/pt)", "$#,##0")
     fmt_col("Stage CAC ($)", "$#,##0")
     fmt_col("Cumulative CAC ($)", "$#,##0")
-    set_col_widths(ws_fun, {1: 5, 2: 52, 3: 22, 4: 12, 5: 14, 6: 12, 7: 15, 8: 18})
+    fmt_col("TAM Net Ratio", "0.00%")
+    fmt_col("SAM Net Ratio", "0.00%")
+    fmt_col("Net Activation Ratio", "0.00%")
+    set_col_widths(ws_fun, {1: 5, 2: 52, 3: 22, 4: 12, 5: 14, 6: 12, 7: 15, 8: 18, 9: 14, 10: 14, 11: 18})
 
     buffer = io.BytesIO()
     wb.save(buffer)
@@ -844,6 +847,11 @@ for model_idx, model_tab in enumerate(tabs[:-1]):
         funnel_results, fin = run_model(state)
         sensitivity_df = build_roi_sensitivity_df(state, shock=0.10)
 
+        # Net Raio Reference Anchors
+        tam_patients = funnel_results[0].patients
+        sam_patients = funnel_results[1].patients
+        activation_patients = funnel_results[5].patients
+
         st.markdown(
             f"<div style='border-left: 4px solid {tab_color}; padding-left: 12px; margin-bottom: 8px;'><strong style='font-size:1.1rem'>{model_name}</strong></div>",
             unsafe_allow_html=True,
@@ -870,6 +878,10 @@ for model_idx, model_tab in enumerate(tabs[:-1]):
         st.subheader("Funnel Table")
         table_rows = []
         for ridx, r in enumerate(funnel_results):
+            tam_ratio = r.patients / tam_patients if tam_patients > 0 else 0.0
+            sam_ratio = r.patients / sam_patients if sam_patients > 0 else 0.0
+            net_activation = r.patients / activation_patients if activation_patients > 0 else 0.0
+
             table_rows.append({
                 "#": ridx + 1,
                 "Stage": r.name,
@@ -879,6 +891,9 @@ for model_idx, model_tab in enumerate(tabs[:-1]):
                 "CAC ($/pt)": float(r.cac_per_patient),
                 "Stage CAC ($)": float(r.stage_cac),
                 "Cumulative CAC ($)": float(r.cumulative_cac),
+                "TAM Net Ratio": float(tam_ratio),
+                "SAM Net Ratio": float(sam_ratio),
+                "Net Activation Ratio": float(net_activation),
             })
 
         if pd is not None:
@@ -888,6 +903,9 @@ for model_idx, model_tab in enumerate(tabs[:-1]):
             df_display["CAC ($/pt)"] = df_display["CAC ($/pt)"].map(lambda x: f"${x:,.0f}")
             df_display["Stage CAC ($)"] = df_display["Stage CAC ($)"].map(lambda x: f"${x:,.0f}")
             df_display["Cumulative CAC ($)"] = df_display["Cumulative CAC ($)"].map(lambda x: f"${x:,.0f}")
+            df_display["TAM Net Ratio"] = df_display["TAM Net Ratio"].map(lambda x: "—" if x > 1.0 else f"{x*100:.2f}%")
+            df_display["SAM Net Ratio"] = df_display["SAM Net Ratio"].map(lambda x: "—" if x > 1.0 else f"{x*100:.2f}%")
+            df_display["Net Activation Ratio"] = df_display["Net Activation Ratio"].map(lambda x: "—" if x > 1.0 else f"{x*100:.2f}%")
             st.dataframe(df_display, use_container_width=True, hide_index=True)
 
             st.markdown("### Export")
@@ -1235,6 +1253,9 @@ st.write("""
 - **ROI (Net)** = Net Revenue / (Funnel CAC + Platform Costs)
 - **Net Profit** = Net Revenue − Funnel CAC − Platform Costs
 - **Net Revenue** = Gross Revenue × (1 − Discount)
+- **TAM Net Ratio** = Patients at Stage / Stage 1 (Total Addressable Market)
+- **SAM Net Ratio** = Patients at Stage / Stage 2 (F2 and F3)
+- **Net Activation Ratio** = Patients at Stage / Stage 6 (Activation onto Dario Connect)
 
 **ROI Sensitivity assumption:**
 - Sensitivity uses one-at-a-time shocks of ±10% on selected variables.
