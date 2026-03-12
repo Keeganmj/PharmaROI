@@ -959,26 +959,34 @@ for model_idx, model_tab in enumerate(tabs[:-1]):
 
         if phased_enabled:
             st.markdown("### Phased Optimization Outlook")
-            roi_variance = roi - phased_roi if (roi == roi and phased_roi == phased_roi) else float("nan")
+            total_cost = fin["funnel_cac_total"] + fin["platform_costs_total"]
+            monthly_net_revenue = fin["net_revenue"] / max(1, int(round(float(state["treatment_years"]) * 12)))
+
+            roi_0_3 = roi * _eff_0_3
+            roi_3_6 = roi * _eff_3_6
+            roi_6_plus = roi * _eff_6_plus
+
             ph1, ph2, ph3 = st.columns(3)
             ph1.metric(
-                "Phased Net Revenue",
-                money(phased_net_revenue),
-                delta=money(phased_net_revenue - fin["net_revenue"]),
-                delta_color="normal",
+                "ROI — Months 0-3",
+                roix(roi_0_3) if roi_0_3 == roi_0_3 else "—",
+                delta=f"{_eff_0_3:.0%} efficiency",
+                delta_color="off",
             )
             ph2.metric(
-                "Phased ROI",
-                roix(phased_roi) if phased_roi == phased_roi else "—",
-                delta=f"{phased_roi - roi:+.2f}x",
+                "ROI — Months 3-6",
+                roix(roi_3_6) if roi_3_6 == roi_3_6 else "—",
+                delta=f"{_eff_3_6:.0%} efficiency",
+                delta_color="off",
             )
             ph3.metric(
-                "ROI Variance (Full vs Phased)",
-                f"{roi_variance:+.2f}x" if roi_variance == roi_variance else "—",
+                "ROI — Months 6+",
+                roix(roi_6_plus) if roi_6_plus == roi_6_plus else "—",
+                delta=f"{_eff_6_plus:.0%} efficiency",
+                delta_color="off",
             )
             st.caption(
-                f"Phased efficiencies - Months 0-3: **{_eff_0_3:.0%}**, "
-                f"Months 3-6: **{_eff_3_6:.0%}**, Months 6+: **{_eff_6_plus:.0%}**"
+                f"ROI shown per phase window against total cost. Full Potential ROI: **{roix(roi)}**"
             )
 
         st.subheader("Funnel Table")
