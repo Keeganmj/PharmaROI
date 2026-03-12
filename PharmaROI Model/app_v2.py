@@ -793,7 +793,7 @@ for model_idx, model_tab in enumerate(tabs[:-1]):
             )
 
             st.markdown("**Revenue & Costs**")
-            c1, c3 = st.columns(3)
+            c1, c3 = st.columns(2)
             with c1:
                 state["arpp"] = st.number_input(
                     "ARPP ($/year)",
