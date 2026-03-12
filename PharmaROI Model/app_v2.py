@@ -223,7 +223,10 @@ def run_model(state: dict):
 # -----------------------------
 # Monthly ROI helper
 # -----------------------------
-def build_monthly_roi_df(fin: dict, state: dict):
+def build_monthly_roi_df(fin: dict, state: dict,
+                         eff_0_3: float = 1.0,
+                         eff_3_6: float = 1.0,
+                         eff_6_plus: float = 1.0):
     """
     Lightweight monthly view for graphing only.
     Assumption:
@@ -238,10 +241,23 @@ def build_monthly_roi_df(fin: dict, state: dict):
     cumulative_revenue = 0.0
     cumulative_cost = 0.0
     cumulative_profit = 0.0
+    cumulative_phased_profit = 0.0
+    phased_total_revenue = 0.0
 
     for month in range(1, months + 1):
         revenue = monthly_net_revenue
         cost = total_cost if month == 1 else 0.0
+
+        if month <= 3:
+            efficiency = eff_0_3
+        elif month <= 6:
+            efficiency = eff_3_6
+        else:
+            efficiency = eff_6_plus
+
+        phased_revenue = revenue * efficiency
+        phased_total_revenue += phased_revenue
+        cumulative_phased_profit += phased_revenue - cost
 
         cumulative_revenue += revenue
         cumulative_cost += cost
@@ -254,6 +270,7 @@ def build_monthly_roi_df(fin: dict, state: dict):
             "Cumulative Net Revenue": cumulative_revenue,
             "Cumulative Cost": cumulative_cost,
             "Cumulative Profit": cumulative_profit,
+            "Cumulative Phased Profit": cumulative_phased_profit,
         })
 
     if pd is not None:
@@ -262,9 +279,10 @@ def build_monthly_roi_df(fin: dict, state: dict):
         positive = df[df["Cumulative Profit"] >= 0]
         if not positive.empty:
             payback_month = int(positive.iloc[0]["Month"])
-        return df, payback_month
+        phased_roi = (phased_total_revenue / total_cost) if total_cost > 0 else float("nan")
+        return df, payback_month, phased_total_revenue, phased_roi
 
-    return rows, None
+    return rows, None, 0.0, float("nan")
 
 # -----------------------------
 # Sensitivity helper
@@ -382,7 +400,7 @@ def plotly_sensitivity_tornado(sdf, shock: float = 0.10):
     )
     return fig
 
-def plotly_monthly_roi(df_monthly, payback_month=None):
+def plotly_monthly_roi(df_monthly, payback_month=None, show_phased=False):
     fig = go.Figure()
     fig.add_trace(go.Scatter(
         x=df_monthly["Month"], y=df_monthly["Cumulative Net Revenue"],
@@ -396,9 +414,19 @@ def plotly_monthly_roi(df_monthly, payback_month=None):
     ))
     fig.add_trace(go.Scatter(
         x=df_monthly["Month"], y=df_monthly["Cumulative Profit"],
-        mode="lines+markers", name="Cumulative Profit",
+        mode="lines+markers", name="Cumulative Profit (Full Potential)",
         line=dict(color=COLORS["profit"], width=3),
     ))
+
+    if show_phased and "Cumulative Phased Profit" in df_monthly.columns:
+        fig.add_trace(go.Scatter(
+            x=df_monthly["Month"],
+            y=df_monthly["Cumulative Phased Profit"],
+            mode="lines+markers",
+            name="Cumulative Phased Profit",
+            line=dict(color=COLORS["warning"], width=3, dash="dot"),
+        ))
+
     if payback_month is not None:
         payback_value = df_monthly.loc[df_monthly["Month"] == payback_month, "Cumulative Profit"].iloc[0]
         fig.add_vline(x=payback_month, line_width=2, line_dash="dot", line_color=COLORS["warning"])
@@ -844,8 +872,69 @@ for model_idx, model_tab in enumerate(tabs[:-1]):
                 pc["maintenance_support"] = st.number_input("Maintenance & Support", min_value=0.0, step=10_000.0, value=float(pc["maintenance_support"]), key=f"ms_{model_idx}")
             st.caption(f"Total Platform Costs: {money(sum(pc.values()))}")
 
+            st.markdown("**Optimization ROI Modeling**")
+            phased_enabled = st.checkbox(
+                "Enable Optimization ROI Modeling",
+                value=state.get("phased_enabled", False),
+                key=f"phased_enabled_{model_idx}",
+            )
+            state["phased_enabled"] = phased_enabled
+
+            if phased_enabled:
+                st.caption("Set revenue efficiency per optimization phase (100% = full potential).")
+                ph_col1, ph_col2, ph_col3 = st.columns(3)
+                with ph_col1:
+                    eff_0_3_pct = st.slider(
+                        "Months 0-3 efficiency",
+                        min_value=0, max_value=100, step=5,
+                        value=int(state.get("phased_eff_0_3", 0.33) * 100),
+                        format="%d%%",
+                        key=f"eff_0_3_{model_idx}",
+                    )
+                    eff_0_3 = eff_0_3_pct / 100
+                with ph_col2:
+                    eff_3_6_pct = st.slider(
+                        "Months 3-6 efficiency",
+                        min_value=0, max_value=100, step=5,
+                        value=int(state.get("phased_eff_3_6", 0.66) * 100),
+                        format="%d%%",
+                        key=f"eff_3_6_{model_idx}",
+                    )
+                    eff_3_6 = eff_3_6_pct / 100
+                with ph_col3:
+                    eff_6_plus_pct = st.slider(
+                        "Months 6+ efficiency",
+                        min_value=0, max_value=100, step=5,
+                        value=int(state.get("phased_eff_6_plus", 1.0) * 100),
+                        format="%d%%",
+                        key=f"eff_6_plus_{model_idx}",
+                    )
+                    eff_6_plus = eff_6_plus_pct / 100
+                state["phased_eff_0_3"] = eff_0_3
+                state["phased_eff_3_6"] = eff_3_6
+                state["phased_eff_6_plus"] = eff_6_plus
+            else:
+                eff_0_3 = state.get("phased_eff_0_3", 0.33)
+                eff_3_6 = state.get("phased_eff_3_6", 0.66)
+                eff_6_plus = state.get("phased_eff_6_plus", 1.0)
+
         funnel_results, fin = run_model(state)
         sensitivity_df = build_roi_sensitivity_df(state, shock=0.10)
+
+        phased_enabled = state.get("phased_enabled", False)
+        _eff_0_3 = state.get("phased_eff_0_3", 0.2) if phased_enabled else 1.0
+        _eff_3_6 = state.get("phased_eff_3_6", 0.6) if phased_enabled else 1.0
+        _eff_6_plus = state.get("phased_eff_6_plus", 1.0) if phased_enabled else 1.0
+
+        if pd is not None:
+            df_monthly, payback_month, phased_net_revenue, phased_roi = build_monthly_roi_df(
+                fin, state,
+                eff_0_3=_eff_0_3,
+                eff_3_6=_eff_3_6,
+                eff_6_plus=_eff_6_plus,
+            )
+        else:
+            df_monthly, payback_month, phased_net_revenue, phased_roi = None, None, 0.0, float("nan")
 
         # Net Raio Reference Anchors
         tam_patients = funnel_results[0].patients
@@ -874,6 +963,30 @@ for model_idx, model_tab in enumerate(tabs[:-1]):
             f"Discount Amount: **\\${fin['gross_revenue'] - fin['net_revenue']:,.0f}**  |  "
             f"Net Revenue per Rx: **\\${(float(state['arpp']) * (1 - fin['discount'])):,.0f}**"
         )
+
+        if phased_enabled:
+            st.markdown("### Phased Optimization Outlook")
+            roi_variance = roi - phased_roi if (roi == roi and phased_roi == phased_roi) else float("nan")
+            ph1, ph2, ph3 = st.columns(3)
+            ph1.metric(
+                "Phased Net Revenue",
+                money(phased_net_revenue),
+                delta=money(phased_net_revenue - fin["net_revenue"]),
+                delta_color="normal",
+            )
+            ph2.metric(
+                "Phased ROI",
+                roix(phased_roi) if phased_roi == phased_roi else "—",
+                delta=f"{phased_roi - roi:+.2f}x",
+            )
+            ph3.metric(
+                "ROI Variance (Full vs Phased)",
+                f"{roi_variance:+.2f}x" if roi_variance == roi_variance else "—",
+            )
+            st.caption(
+                f"Phased efficiencies - Months 0-3: **{_eff_0_3:.0%}**, "
+                f"Months 3-6: **{_eff_3_6:.0%}**, Months 6+: **{_eff_6_plus:.0%}**"
+            )
 
         st.subheader("Funnel Table")
         table_rows = []
@@ -945,6 +1058,17 @@ for model_idx, model_tab in enumerate(tabs[:-1]):
             else:
                 st.info("Sensitivity chart requires pandas.")
 
+        if pd is not None and df_monthly is not None:
+            with st.expander("Monthly ROI Comparison", expanded=True):
+                st.caption(
+                    "Net revenue spread evenly across treatment months. "
+                    + ("Phased Cumulative Profit shown as a dotted line." if phased_enabled else "Enable Phased ROI Modeling to overlay a ramp-up curve.")
+                )
+                st.plotly_chart(
+                    plotly_monthly_roi(df_monthly, payback_month, show_phased=phased_enabled),
+                    use_container_width=True,
+                )
+
         with st.expander("Funnel Visualization", expanded=True):
             if pd is not None:
                 funnel_chart_df = pd.DataFrame([{"Stage": r.name, "Patients": r.patients} for r in funnel_results])
@@ -999,7 +1123,7 @@ with tabs[-1]:
             })
 
             if pd is not None:
-                monthly_df, _ = build_monthly_roi_df(fin, mstate)
+                monthly_df, _, _phased_rev, _phased_roi = build_monthly_roi_df(fin, mstate)
                 monthly_copy = monthly_df.copy()
                 monthly_copy["Model"] = mname
                 monthly_rows.append(monthly_copy)
