@@ -793,20 +793,13 @@ for model_idx, model_tab in enumerate(tabs[:-1]):
             )
 
             st.markdown("**Revenue & Costs**")
-            c1, c2, c3 = st.columns(3)
+            c1, c3 = st.columns(3)
             with c1:
                 state["arpp"] = st.number_input(
                     "ARPP ($/year)",
                     min_value=0.0, step=1_000.0,
                     value=float(state["arpp"]),
                     key=f"arpp_{model_idx}",
-                )
-            with c2:
-                state["treatment_years"] = st.slider(
-                    "Treatment years",
-                    min_value=0.1, max_value=5.0, step=0.1,
-                    value=float(state["treatment_years"]),
-                    key=f"years_{model_idx}",
                 )
             with c3:
                 state["discount"] = st.slider(
