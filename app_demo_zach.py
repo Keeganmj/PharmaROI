@@ -1,6 +1,6 @@
 # app.py
-# PharmaROI Intelligence — V3.1 (Multi-Model Comparison with Ad Agency Baseline)
-# Run: streamlit run "PharmaROI Model/app_v2.py"
+# PharmaROI Intelligence — V3.2 (Multi-Model Comparison with Ad Agency Baseline)
+# Run: streamlit run app.py
 
 from __future__ import annotations
 
@@ -34,7 +34,7 @@ COLORS = {
     "warning": "#F59E0B",
     "danger": "#EF4444",
     "muted": "#6B7280",
-    "ad_agency": "#8B5CF6",  # Purple for ad agency baseline
+    "ad_agency": "#8B5CF6",
 }
 
 TAB_PALETTE = [
@@ -42,12 +42,12 @@ TAB_PALETTE = [
     "#8B5CF6", "#EC4899", "#06B6D4", "#84CC16",
 ]
 
-# Timeline period colors for optimization story
+# Timeline period colors for optimization story (used in Comparison tab only)
 TIMELINE_COLORS = {
-    "launch": "#EF4444",      # Red - Launch
-    "opt1": "#F59E0B",        # Amber - Optimization 1
-    "opt2": "#0F6CBD",        # Blue - Optimization 2
-    "steady": "#10B981",      # Green - Steady State
+    "launch": "#EF4444",
+    "opt1": "#F59E0B",
+    "opt2": "#0F6CBD",
+    "steady": "#10B981",
 }
 
 # -----------------------------
@@ -106,26 +106,26 @@ ZERO_SAMPLE = {
 }
 
 # -----------------------------
-# Scenario Presets (NEW)
+# Scenario Presets
 # -----------------------------
-# These modify only the optimizable funnel ratios (stages 6-13)
-# to represent different optimization phases
+# These presets help you quickly configure a model tab for a specific optimization stage.
+# Use one model tab per stage, then compare them all in the Comparison tab.
 
 PRESET_SCENARIOS = {
     "Dario Launch": {
-        "description": "Initial launch with conservative conversion assumptions",
+        "description": "Initial launch — conservative conversion assumptions",
         "ratio_multipliers": {5: 0.70, 6: 0.60, 7: 0.70, 8: 0.90, 9: 0.65, 10: 0.80, 11: 0.40, 12: 0.80},
     },
     "Optimization 1": {
-        "description": "First optimization pass - improved early funnel",
+        "description": "First optimization — improved early funnel",
         "ratio_multipliers": {5: 0.85, 6: 0.75, 7: 0.80, 8: 0.95, 9: 0.75, 10: 0.85, 11: 0.45, 12: 0.85},
     },
     "Optimization 2": {
-        "description": "Second optimization pass - refined targeting",
+        "description": "Second optimization — refined targeting",
         "ratio_multipliers": {5: 0.95, 6: 0.90, 7: 0.90, 8: 1.00, 9: 0.85, 10: 0.90, 11: 0.48, 12: 0.88},
     },
     "Steady State": {
-        "description": "Mature operation at full potential",
+        "description": "Mature operation — full potential",
         "ratio_multipliers": {5: 1.00, 6: 1.00, 7: 1.00, 8: 1.00, 9: 1.00, 10: 1.00, 11: 0.50, 12: 0.90},
     },
 }
@@ -256,28 +256,14 @@ def run_model(state: dict):
 
 
 # -----------------------------
-# Ad Agency Baseline Computation (NEW)
+# Ad Agency Baseline Computation
 # -----------------------------
 def compute_ad_agency_baseline(spend: float, roas: float, arpp: float, treatment_years: float, discount: float):
-    """
-    Compute ad agency baseline metrics using simplified ROAS logic.
-    
-    Args:
-        spend: Total ad spend budget
-        roas: Return on Ad Spend (e.g., 1.35 = $1.35 revenue per $1 spent)
-        arpp: Annual Revenue Per Patient (for patient estimation)
-        treatment_years: Treatment duration
-        discount: Gross-to-net discount rate
-    
-    Returns:
-        Dict with revenue, spend, net_profit, roi, and estimated treated patients
-    """
     gross_revenue = spend * roas
     net_revenue = gross_revenue * (1.0 - discount)
     net_profit = net_revenue - spend
     roi = net_revenue / spend if spend > 0 else float("nan")
     
-    # Estimate treated patients from revenue
     patient_ltv = arpp * treatment_years * (1.0 - discount)
     estimated_patients = net_revenue / patient_ltv if patient_ltv > 0 else 0.0
     
@@ -293,16 +279,12 @@ def compute_ad_agency_baseline(spend: float, roas: float, arpp: float, treatment
 
 
 # -----------------------------
-# Monthly ROI helper (UPDATED - renamed to Cumulative Profit)
+# Cumulative Profit helper (simplified - no phased logic)
 # -----------------------------
-def build_monthly_profit_df(fin: dict, state: dict,
-                            eff_0_3: float = 1.0,
-                            eff_3_6: float = 1.0,
-                            eff_6_9: float = 1.0,
-                            eff_9_12: float = 1.0):
+def build_monthly_profit_df(fin: dict, state: dict):
     """
-    Lightweight monthly view for graphing only.
-    Now uses 4 optimization phases for timeline story.
+    Simple monthly view for graphing cumulative profit over time.
+    No phased efficiency - just straightforward monthly revenue spread.
     """
     months = max(1, int(round(float(state["treatment_years"]) * 12)))
     total_cost = float(fin["funnel_cac_total"] + fin["platform_costs_total"])
@@ -312,30 +294,10 @@ def build_monthly_profit_df(fin: dict, state: dict,
     cumulative_revenue = 0.0
     cumulative_cost = 0.0
     cumulative_profit = 0.0
-    cumulative_phased_profit = 0.0
-    phased_total_revenue = 0.0
 
     for month in range(1, months + 1):
         revenue = monthly_net_revenue
         cost = total_cost if month == 1 else 0.0
-
-        # 4-phase optimization timeline
-        if month <= 3:
-            efficiency = eff_0_3
-            phase = "Launch"
-        elif month <= 6:
-            efficiency = eff_3_6
-            phase = "Optimization 1"
-        elif month <= 9:
-            efficiency = eff_6_9
-            phase = "Optimization 2"
-        else:
-            efficiency = eff_9_12
-            phase = "Steady State"
-
-        phased_revenue = revenue * efficiency
-        phased_total_revenue += phased_revenue
-        cumulative_phased_profit += phased_revenue - cost
 
         cumulative_revenue += revenue
         cumulative_cost += cost
@@ -343,14 +305,11 @@ def build_monthly_profit_df(fin: dict, state: dict,
 
         rows.append({
             "Month": month,
-            "Phase": phase,
             "Monthly Net Revenue": revenue,
             "Monthly Cost": cost,
             "Cumulative Net Revenue": cumulative_revenue,
             "Cumulative Cost": cumulative_cost,
             "Cumulative Profit": cumulative_profit,
-            "Cumulative Phased Profit": cumulative_phased_profit,
-            "Efficiency": efficiency,
         })
 
     if pd is not None:
@@ -359,25 +318,25 @@ def build_monthly_profit_df(fin: dict, state: dict,
         positive = df[df["Cumulative Profit"] >= 0]
         if not positive.empty:
             payback_month = int(positive.iloc[0]["Month"])
-        phased_roi = (phased_total_revenue / total_cost) if total_cost > 0 else float("nan")
-        return df, payback_month, phased_total_revenue, phased_roi
+        return df, payback_month
 
-    return rows, None, 0.0, float("nan")
+    return rows, None
 
 
 # -----------------------------
-# Timeline Optimization Chart Builder (NEW)
+# Timeline Optimization Chart Builder (Comparison Tab only)
 # -----------------------------
 def build_timeline_optimization_df(models: list, model_names: list, model_fins: list):
     """
     Build a timeline showing cumulative profit across 4 optimization phases.
-    Each model contributes to one phase (if available).
     
-    Maps:
-    - Model 1 → Months 0-3 (Launch)
-    - Model 2 → Months 3-6 (Optimization 1)
-    - Model 3 → Months 6-9 (Optimization 2)
-    - Model 4 → Months 9-12 (Steady State)
+    This maps your model tabs to optimization phases:
+    - Model 1 → Months 1-3 (Launch)
+    - Model 2 → Months 4-6 (Optimization 1)
+    - Model 3 → Months 7-9 (Optimization 2)
+    - Model 4 → Months 10-12 (Steady State)
+    
+    If fewer than 4 models, the last model continues through remaining phases.
     """
     if pd is None:
         return None
@@ -397,16 +356,13 @@ def build_timeline_optimization_df(models: list, model_names: list, model_fins: 
     for phase_idx in range(4):
         phase = phases[phase_idx]
         
-        # Use the corresponding model if available, else use last available
         model_idx = min(phase_idx, num_models - 1)
         fin = model_fins[model_idx]
         model_name = model_names[model_idx]
         
-        # Calculate monthly profit for this phase
         total_cost = fin["funnel_cac_total"] + fin["platform_costs_total"]
         monthly_profit = (fin["net_revenue"] - total_cost) / 12 if phase_idx == 0 else fin["net_revenue"] / 12
         
-        # For first phase, subtract costs in month 1
         for month in range(phase["months"][0], phase["months"][1] + 1):
             month_cost = total_cost if month == 1 else 0
             month_profit = monthly_profit - month_cost if month == 1 else monthly_profit
@@ -541,11 +497,8 @@ def plotly_sensitivity_tornado(sdf, shock: float = 0.10):
     return fig
 
 
-def plotly_cumulative_profit(df_monthly, payback_month=None, show_phased=False):
-    """
-    RENAMED from plotly_monthly_roi - now clearly shows Cumulative Profit Over Time
-    Y-axis is dollars, not ROI
-    """
+def plotly_cumulative_profit(df_monthly, payback_month=None):
+    """Simple cumulative profit chart - no phased overlay."""
     fig = go.Figure()
     
     fig.add_trace(go.Scatter(
@@ -570,20 +523,10 @@ def plotly_cumulative_profit(df_monthly, payback_month=None, show_phased=False):
         x=df_monthly["Month"], 
         y=df_monthly["Cumulative Profit"],
         mode="lines+markers", 
-        name="Cumulative Profit (Full Potential)",
+        name="Cumulative Profit",
         line=dict(color=COLORS["profit"], width=3),
         hovertemplate="Month %{x}<br>Cumulative Profit: $%{y:,.0f}<extra></extra>",
     ))
-
-    if show_phased and "Cumulative Phased Profit" in df_monthly.columns:
-        fig.add_trace(go.Scatter(
-            x=df_monthly["Month"],
-            y=df_monthly["Cumulative Phased Profit"],
-            mode="lines+markers",
-            name="Cumulative Profit (Phased)",
-            line=dict(color=COLORS["warning"], width=3, dash="dot"),
-            hovertemplate="Month %{x}<br>Phased Profit: $%{y:,.0f}<extra></extra>",
-        ))
 
     if payback_month is not None:
         payback_value = df_monthly.loc[df_monthly["Month"] == payback_month, "Cumulative Profit"].iloc[0]
@@ -598,8 +541,8 @@ def plotly_cumulative_profit(df_monthly, payback_month=None, show_phased=False):
         height=420, 
         margin=dict(l=10, r=10, t=40, b=10),
         xaxis_title="Month", 
-        yaxis_title="Cumulative Profit ($)",  # CHANGED: Now clearly shows dollars
-        yaxis_tickformat="$,.0f",  # ADDED: Dollar formatting
+        yaxis_title="Cumulative Profit ($)",
+        yaxis_tickformat="$,.0f",
         legend_title=None, 
         hovermode="x unified",
     )
@@ -607,13 +550,9 @@ def plotly_cumulative_profit(df_monthly, payback_month=None, show_phased=False):
 
 
 def plotly_timeline_optimization(timeline_df, show_baseline=False, baseline_data=None):
-    """
-    NEW: Timeline chart showing optimization story across 4 phases
-    Each phase has different slope representing improving efficiency
-    """
+    """Timeline chart showing optimization story across 4 phases (Comparison tab only)."""
     fig = go.Figure()
     
-    # Add phase-colored segments
     phases = timeline_df["Phase"].unique()
     phase_colors = {
         "Launch": TIMELINE_COLORS["launch"],
@@ -642,7 +581,6 @@ def plotly_timeline_optimization(timeline_df, show_baseline=False, baseline_data
             customdata=phase_data["Model"],
         ))
     
-    # Optional baseline overlay
     if show_baseline and baseline_data is not None:
         fig.add_trace(go.Scatter(
             x=list(range(1, 13)),
@@ -653,7 +591,6 @@ def plotly_timeline_optimization(timeline_df, show_baseline=False, baseline_data
             hovertemplate="Month %{x}<br>Baseline Profit: $%{y:,.0f}<extra></extra>",
         ))
     
-    # Add phase boundary annotations
     fig.add_vline(x=3.5, line_width=1, line_dash="dot", line_color=COLORS["muted"], opacity=0.5)
     fig.add_vline(x=6.5, line_width=1, line_dash="dot", line_color=COLORS["muted"], opacity=0.5)
     fig.add_vline(x=9.5, line_width=1, line_dash="dot", line_color=COLORS["muted"], opacity=0.5)
@@ -661,11 +598,11 @@ def plotly_timeline_optimization(timeline_df, show_baseline=False, baseline_data
     fig.update_layout(
         height=450,
         margin=dict(l=10, r=10, t=50, b=10),
-        title="Cumulative Profit Over Time (Optimization Timeline)",
+        title="Optimization Timeline: Cumulative Profit Over 12 Months",
         xaxis_title="Month",
         yaxis_title="Cumulative Profit ($)",
         yaxis_tickformat="$,.0f",
-        legend_title="Optimization Phase",
+        legend_title="Phase (mapped from models)",
         hovermode="x unified",
     )
     
@@ -673,9 +610,6 @@ def plotly_timeline_optimization(timeline_df, show_baseline=False, baseline_data
 
 
 def plotly_funnel_patients(df_funnel, tab_color, use_log_scale=False):
-    """
-    UPDATED: Added log scale toggle option
-    """
     import numpy as np
     
     fig = px.bar(df_funnel, x="Patients", y="Stage", orientation="h", text="Patients")
@@ -686,9 +620,7 @@ def plotly_funnel_patients(df_funnel, tab_color, use_log_scale=False):
         cliponaxis=False
     )
     
-    # Apply log scale if requested
     if use_log_scale:
-        # Ensure no zero values for log scale
         min_patients = df_funnel["Patients"].replace(0, np.nan).min()
         fig.update_xaxes(
             type="log",
@@ -810,13 +742,8 @@ def plotly_roi_vs_total_cost(comp_df, color_map):
 
 
 def plotly_baseline_comparison(dario_df, ad_agency_result, color_map):
-    """
-    NEW: Chart comparing Dario models vs Ad Agency baseline
-    """
-    # Build comparison data
     data = []
     
-    # Add Dario models
     for _, row in dario_df.iterrows():
         data.append({
             "Model": row["Model"],
@@ -826,7 +753,6 @@ def plotly_baseline_comparison(dario_df, ad_agency_result, color_map):
             "Treated Patients": row["Treated Patients"],
         })
     
-    # Add Ad Agency baseline
     data.append({
         "Model": "Ad Agency Baseline",
         "Type": "Baseline",
@@ -837,7 +763,6 @@ def plotly_baseline_comparison(dario_df, ad_agency_result, color_map):
     
     comp_df = pd.DataFrame(data)
     
-    # Extend color map
     extended_colors = color_map.copy()
     extended_colors["Ad Agency Baseline"] = COLORS["ad_agency"]
     
@@ -991,7 +916,6 @@ def init_session():
         st.session_state["model_names"] = ["Model 1"]
         st.session_state["active_model_idx"] = 0
     
-    # NEW: Ad Agency Baseline settings (separate comparison layer)
     if "ad_agency_baseline" not in st.session_state:
         st.session_state["ad_agency_baseline"] = {
             "enabled": False,
@@ -1004,9 +928,9 @@ init_session()
 # -----------------------------
 # Page title
 # -----------------------------
-st.set_page_config(page_title="PharmaROI V3.1 — Multi-Model", page_icon="📈", layout="wide")
-st.title("PharmaROI Intelligence — V3.1 (Multi-Model Comparison)")
-st.caption("Build multiple ROI models side-by-side, compare them, and benchmark against ad agency baseline.")
+st.set_page_config(page_title="PharmaROI V3.2 — Multi-Model", page_icon="📈", layout="wide")
+st.title("PharmaROI Intelligence — V3.2 (Multi-Model Comparison)")
+st.caption("Build scenario models in each tab, then compare them all — including the optimization timeline — in the Comparison tab.")
 
 # -----------------------------
 # Model management bar
@@ -1104,17 +1028,23 @@ for model_idx, model_tab in enumerate(tabs[:-1]):
                     st.session_state["models"][model_idx] = copy.deepcopy(ZERO_SAMPLE)
                     st.rerun()
 
-            # NEW: Preset Scenarios
-            st.markdown("**Quick Presets (Optimization Phases)**")
+            # Scenario Presets with clear explanation
+            st.markdown("---")
+            st.markdown("**Scenario Presets**")
+            st.caption(
+                "These presets help you quickly configure this model for a specific optimization stage. "
+                "**Tip:** Use one model tab per stage (e.g., Model 1 = Launch, Model 2 = Opt 1, Model 3 = Opt 2, Model 4 = Steady State), "
+                "then view the optimization timeline in the **Comparison tab**."
+            )
             preset_cols = st.columns(4)
             for pidx, (preset_name, preset_config) in enumerate(PRESET_SCENARIOS.items()):
                 with preset_cols[pidx]:
                     if st.button(preset_name, key=f"preset_{model_idx}_{pidx}", use_container_width=True, help=preset_config["description"]):
-                        # Apply ratio multipliers to current state
                         for stage_idx, multiplier in preset_config["ratio_multipliers"].items():
                             base_ratio = SPONSOR_DEFAULTS["ratios"][stage_idx]
                             state["ratios"][stage_idx] = clamp(base_ratio * multiplier, 0.0, 1.0)
                         st.rerun()
+            st.markdown("---")
 
             st.markdown("**Base Population**")
             state["base_population"] = st.number_input(
@@ -1165,7 +1095,7 @@ for model_idx, model_tab in enumerate(tabs[:-1]):
                     else:
                         disabled = not state["stage_active"][sidx]
                         
-                        # NEW: Stage 6 warning about annual rates
+                        # Stage 6 warning about annual rates
                         if sidx == 5:
                             st.warning(
                                 "⚠️ **Stage 6 ratios are expressed as annual rates by default.** "
@@ -1205,83 +1135,13 @@ for model_idx, model_tab in enumerate(tabs[:-1]):
                 pc["maintenance_support"] = st.number_input("Maintenance & Support", min_value=0.0, step=10_000.0, value=float(pc["maintenance_support"]), key=f"ms_{model_idx}")
             st.caption(f"Total Platform Costs: {money(sum(pc.values()))}")
 
-            st.markdown("**Optimization ROI Modeling**")
-            phased_enabled = st.checkbox(
-                "Enable Optimization ROI Modeling",
-                value=state.get("phased_enabled", False),
-                key=f"phased_enabled_{model_idx}",
-            )
-            state["phased_enabled"] = phased_enabled
-
-            if phased_enabled:
-                st.caption("Set revenue efficiency per optimization phase (100% = full potential).")
-                st.info("Timeline: Months 0-3 → Launch | 3-6 → Opt 1 | 6-9 → Opt 2 | 9-12 → Steady State")
-                ph_col1, ph_col2, ph_col3, ph_col4 = st.columns(4)
-                with ph_col1:
-                    eff_0_3_pct = st.slider(
-                        "Launch (0-3)",
-                        min_value=0, max_value=100, step=5,
-                        value=int(state.get("phased_eff_0_3", 0.33) * 100),
-                        format="%d%%",
-                        key=f"eff_0_3_{model_idx}",
-                    )
-                    eff_0_3 = eff_0_3_pct / 100
-                with ph_col2:
-                    eff_3_6_pct = st.slider(
-                        "Opt 1 (3-6)",
-                        min_value=0, max_value=100, step=5,
-                        value=int(state.get("phased_eff_3_6", 0.50) * 100),
-                        format="%d%%",
-                        key=f"eff_3_6_{model_idx}",
-                    )
-                    eff_3_6 = eff_3_6_pct / 100
-                with ph_col3:
-                    eff_6_9_pct = st.slider(
-                        "Opt 2 (6-9)",
-                        min_value=0, max_value=100, step=5,
-                        value=int(state.get("phased_eff_6_9", 0.75) * 100),
-                        format="%d%%",
-                        key=f"eff_6_9_{model_idx}",
-                    )
-                    eff_6_9 = eff_6_9_pct / 100
-                with ph_col4:
-                    eff_9_12_pct = st.slider(
-                        "Steady (9-12)",
-                        min_value=0, max_value=100, step=5,
-                        value=int(state.get("phased_eff_9_12", 1.0) * 100),
-                        format="%d%%",
-                        key=f"eff_9_12_{model_idx}",
-                    )
-                    eff_9_12 = eff_9_12_pct / 100
-                state["phased_eff_0_3"] = eff_0_3
-                state["phased_eff_3_6"] = eff_3_6
-                state["phased_eff_6_9"] = eff_6_9
-                state["phased_eff_9_12"] = eff_9_12
-            else:
-                eff_0_3 = state.get("phased_eff_0_3", 0.33)
-                eff_3_6 = state.get("phased_eff_3_6", 0.50)
-                eff_6_9 = state.get("phased_eff_6_9", 0.75)
-                eff_9_12 = state.get("phased_eff_9_12", 1.0)
-
         funnel_results, fin = run_model(state)
         sensitivity_df = build_roi_sensitivity_df(state, shock=0.10)
 
-        phased_enabled = state.get("phased_enabled", False)
-        _eff_0_3 = state.get("phased_eff_0_3", 0.33) if phased_enabled else 1.0
-        _eff_3_6 = state.get("phased_eff_3_6", 0.50) if phased_enabled else 1.0
-        _eff_6_9 = state.get("phased_eff_6_9", 0.75) if phased_enabled else 1.0
-        _eff_9_12 = state.get("phased_eff_9_12", 1.0) if phased_enabled else 1.0
-
         if pd is not None:
-            df_monthly, payback_month, phased_net_revenue, phased_roi = build_monthly_profit_df(
-                fin, state,
-                eff_0_3=_eff_0_3,
-                eff_3_6=_eff_3_6,
-                eff_6_9=_eff_6_9,
-                eff_9_12=_eff_9_12,
-            )
+            df_monthly, payback_month = build_monthly_profit_df(fin, state)
         else:
-            df_monthly, payback_month, phased_net_revenue, phased_roi = None, None, 0.0, float("nan")
+            df_monthly, payback_month = None, None
 
         # Net Ratio Reference Anchors
         tam_patients = funnel_results[0].patients
@@ -1310,44 +1170,6 @@ for model_idx, model_tab in enumerate(tabs[:-1]):
             f"Discount Amount: **\\${fin['gross_revenue'] - fin['net_revenue']:,.0f}**  |  "
             f"Net Revenue per Rx: **\\${(float(state['arpp']) * (1 - fin['discount'])):,.0f}**"
         )
-
-        if phased_enabled:
-            st.markdown("### Phased Optimization Outlook")
-            total_cost = fin["funnel_cac_total"] + fin["platform_costs_total"]
-
-            roi_0_3 = roi * _eff_0_3
-            roi_3_6 = roi * _eff_3_6
-            roi_6_9 = roi * _eff_6_9
-            roi_9_12 = roi * _eff_9_12
-
-            ph1, ph2, ph3, ph4 = st.columns(4)
-            ph1.metric(
-                "ROI — Launch (0-3)",
-                roix(roi_0_3) if roi_0_3 == roi_0_3 else "—",
-                delta=f"{_eff_0_3:.0%} eff.",
-                delta_color="off",
-            )
-            ph2.metric(
-                "ROI — Opt 1 (3-6)",
-                roix(roi_3_6) if roi_3_6 == roi_3_6 else "—",
-                delta=f"{_eff_3_6:.0%} eff.",
-                delta_color="off",
-            )
-            ph3.metric(
-                "ROI — Opt 2 (6-9)",
-                roix(roi_6_9) if roi_6_9 == roi_6_9 else "—",
-                delta=f"{_eff_6_9:.0%} eff.",
-                delta_color="off",
-            )
-            ph4.metric(
-                "ROI — Steady (9-12)",
-                roix(roi_9_12) if roi_9_12 == roi_9_12 else "—",
-                delta=f"{_eff_9_12:.0%} eff.",
-                delta_color="off",
-            )
-            st.caption(
-                f"ROI shown per phase window against total cost. Full Potential ROI: **{roix(roi)}**"
-            )
 
         st.subheader("Funnel Table")
         table_rows = []
@@ -1419,19 +1241,14 @@ for model_idx, model_tab in enumerate(tabs[:-1]):
             else:
                 st.info("Sensitivity chart requires pandas.")
 
-        # RENAMED: "Monthly ROI Comparison" → "Cumulative Profit Over Time"
         if pd is not None and df_monthly is not None:
             with st.expander("Cumulative Profit Over Time", expanded=True):
-                st.caption(
-                    "Net revenue spread evenly across treatment months. "
-                    + ("Phased Cumulative Profit shown as a dotted line." if phased_enabled else "Enable Optimization ROI Modeling to overlay a ramp-up curve.")
-                )
+                st.caption("Net revenue spread evenly across treatment months. Costs applied in Month 1.")
                 st.plotly_chart(
-                    plotly_cumulative_profit(df_monthly, payback_month, show_phased=phased_enabled),
+                    plotly_cumulative_profit(df_monthly, payback_month),
                     use_container_width=True,
                 )
 
-        # NEW: Funnel with log scale toggle
         with st.expander("Funnel Visualization", expanded=True):
             if pd is not None:
                 funnel_log_scale = st.checkbox("Use log scale", value=False, key=f"funnel_log_{model_idx}")
@@ -1446,11 +1263,17 @@ for model_idx, model_tab in enumerate(tabs[:-1]):
 # -----------------------------
 with tabs[-1]:
     st.subheader("Model Comparison")
+    
+    # Explanation of how this tab works
+    st.info(
+        "**How to use this tab:** Each model tab represents a scenario (e.g., Launch, Optimization 1, Optimization 2, Steady State). "
+        "This Comparison tab lets you compare them side-by-side and visualize the **optimization timeline** showing how profit improves over time."
+    )
 
     if len(st.session_state["models"]) < 2:
-        st.info("Add at least 2 models to compare them here.")
+        st.warning("Add at least 2 models to compare them here. Use the preset buttons in each model tab to quickly set up Launch, Opt 1, Opt 2, and Steady State scenarios.")
     else:
-        # NEW: Ad Agency Baseline Configuration
+        # Ad Agency Baseline Configuration
         st.markdown("---")
         st.markdown("### Ad Agency Baseline (Comparison Layer)")
         st.caption("Compare Dario models against traditional digital advertising baseline.")
@@ -1484,7 +1307,6 @@ with tabs[-1]:
                     help="Return on Ad Spend. Industry benchmark: ~1.35x for pharma digital ads.",
                 )
             
-            # Compute baseline using first model's ARPP/discount for patient estimation
             first_model = st.session_state["models"][0]
             ad_agency_result = compute_ad_agency_baseline(
                 spend=st.session_state["ad_agency_baseline"]["spend"],
@@ -1494,14 +1316,13 @@ with tabs[-1]:
                 discount=float(first_model["discount"]),
             )
             
-            # Show baseline metrics
             bl_k1, bl_k2, bl_k3, bl_k4 = st.columns(4)
             bl_k1.metric("Ad Spend", money(ad_agency_result["spend"]))
             bl_k2.metric("ROAS", f"{ad_agency_result['roas']:.2f}x")
             bl_k3.metric("Net Revenue", money(ad_agency_result["net_revenue"]))
             bl_k4.metric("Net Profit", money(ad_agency_result["net_profit"]))
             
-            st.caption(f"Estimated Treated Patients: {number(ad_agency_result['estimated_patients'])} (inferred from revenue using first model's ARPP/discount)")
+            st.caption(f"Estimated Treated Patients: {number(ad_agency_result['estimated_patients'])} (inferred from revenue)")
         else:
             ad_agency_result = None
         
@@ -1525,7 +1346,6 @@ with tabs[-1]:
         selected_names = [st.session_state["model_names"][i] for i in selected_indices]
 
         comparison_rows = []
-        monthly_rows = []
         model_fins = []
 
         for mstate, mname in zip(selected_models, selected_names):
@@ -1547,12 +1367,6 @@ with tabs[-1]:
                 "ARPP": float(mstate["arpp"]),
                 "ROI (Net)": roi if roi == roi else 0.0,
             })
-
-            if pd is not None:
-                monthly_df, _, _phased_rev, _phased_roi = build_monthly_profit_df(fin, mstate)
-                monthly_copy = monthly_df.copy()
-                monthly_copy["Model"] = mname
-                monthly_rows.append(monthly_copy)
 
         if pd is not None:
             comp_df = pd.DataFrame(comparison_rows)
@@ -1589,7 +1403,7 @@ with tabs[-1]:
                     use_container_width=True,
                 )
 
-            # NEW: Baseline vs Dario comparison chart
+            # Baseline vs Dario comparison chart
             if ad_agency_result is not None:
                 st.markdown("### Dario vs Ad Agency Baseline")
                 st.plotly_chart(
@@ -1597,22 +1411,24 @@ with tabs[-1]:
                     use_container_width=True,
                 )
 
-            # NEW: Timeline Optimization Chart (renamed from Monthly ROI)
-            st.markdown("### Cumulative Profit Over Time")
+            # Timeline Optimization Chart
+            st.markdown("### Optimization Timeline: Cumulative Profit Over Time")
+            st.caption(
+                "**How this works:** Your model tabs are mapped to optimization phases over a 12-month period. "
+                "Model 1 → Launch (Months 1-3) | Model 2 → Opt 1 (Months 4-6) | Model 3 → Opt 2 (Months 7-9) | Model 4 → Steady State (Months 10-12). "
+                "If you have fewer than 4 models, the last model continues through remaining phases."
+            )
             
-            # Build timeline data
             if len(selected_models) >= 1:
                 timeline_df = build_timeline_optimization_df(selected_models, selected_names, model_fins)
                 
                 if timeline_df is not None:
-                    # Optional baseline overlay
                     show_baseline_overlay = False
                     baseline_monthly_data = None
                     
                     if ad_agency_result is not None:
                         show_baseline_overlay = st.checkbox("Show Ad Agency Baseline overlay", value=True, key="timeline_baseline_overlay")
                         if show_baseline_overlay:
-                            # Calculate baseline monthly cumulative profit
                             monthly_baseline_profit = ad_agency_result["net_profit"] / 12
                             baseline_monthly_data = [monthly_baseline_profit * m for m in range(1, 13)]
                     
@@ -1620,14 +1436,8 @@ with tabs[-1]:
                         plotly_timeline_optimization(timeline_df, show_baseline_overlay, baseline_monthly_data),
                         use_container_width=True,
                     )
-                    
-                    st.caption(
-                        "Timeline maps models to optimization phases: "
-                        "Model 1 → Launch (M1-3) | Model 2 → Opt 1 (M4-6) | Model 3 → Opt 2 (M7-9) | Model 4 → Steady (M10-12). "
-                        "If fewer than 4 models, last model continues through remaining phases."
-                    )
 
-            # ROI vs Patient Impact
+            # ROI Insights
             st.markdown("### ROI Insights")
             st.markdown("#### ROI vs Patient Impact")
             st.caption("Compares scenario efficiency and patient impact on the same view.")
@@ -1641,7 +1451,6 @@ with tabs[-1]:
                 key="dl_roi_vs_patient_impact",
             )
 
-            # ROI vs Total Investment
             st.markdown("#### ROI vs Total Investment")
             st.caption("Shows how efficiently each scenario converts total investment into ROI.")
             roi_vs_investment_df = comp_df[["Model", "Total Cost", "Treated Patients", "Net Revenue", "Net Profit", "ROI (Net)"]].copy()
@@ -1654,7 +1463,7 @@ with tabs[-1]:
                 key="dl_roi_vs_total_investment",
             )
 
-            # MOVED TO EXPANDER: Key Financial Drivers (deprioritized)
+            # Key Financial Drivers (in expander - deprioritized)
             with st.expander("Key Financial Drivers Comparison", expanded=False):
                 st.caption("Compares major revenue and cost drivers relative to the average across the selected models.")
                 revenue_metrics = ["ARPP", "Discount", "Treated Patients"]
@@ -1769,34 +1578,30 @@ with tabs[-1]:
 st.divider()
 st.subheader("How to interpret")
 st.write("""
-- Each **model tab** is fully independent — tweak funnel stages, ratios, CAC, ARPP, and discount separately.
-- Use **Add New Model** or **Duplicate Current** to create variants.
-- The **Comparison** tab shows all models side-by-side with charts and a downloadable table.
+**Model Tabs = Scenarios**
+- Each model tab is an independent scenario (e.g., Launch, Optimization 1, Optimization 2, Steady State)
+- Use the **Scenario Presets** buttons to quickly configure each tab for a specific optimization stage
+
+**Comparison Tab = Timeline Story**
+- The Comparison tab shows all your scenarios side-by-side
+- The **Optimization Timeline** chart maps your models to a 12-month period:
+  - Model 1 → Launch (Months 1-3)
+  - Model 2 → Optimization 1 (Months 4-6)
+  - Model 3 → Optimization 2 (Months 7-9)
+  - Model 4 → Steady State (Months 10-12)
+
+**Key Formulas**
 - **ROI (Net)** = Net Revenue / (Funnel CAC + Platform Costs)
 - **Net Profit** = Net Revenue − Funnel CAC − Platform Costs
 - **Net Revenue** = Gross Revenue × (1 − Discount)
-- **TAM Net Ratio** = Patients at Stage / Stage 1 (Total Addressable Market)
-- **SAM Net Ratio** = Patients at Stage / Stage 2 (F2 and F3)
-- **Net Activation Ratio** = Patients at Stage / Stage 6 (Activation onto Dario Connect)
 
-**Ad Agency Baseline:**
+**Ad Agency Baseline**
 - Uses simplified ROAS (Return on Ad Spend) logic
 - Default ROAS of 1.35x is typical for pharma digital advertising
-- Patient count is estimated by back-calculating from revenue using your ARPP/discount settings
-- Enables apples-to-apples comparison with Dario funnel models
+- Enables comparison with traditional ad spend
 
-**Optimization Timeline:**
-- Models map to phases: Model 1 → Launch | Model 2 → Opt 1 | Model 3 → Opt 2 | Model 4 → Steady State
-- Each phase shows cumulative profit with slope reflecting that model's economics
-- This is a visualization layer only — annual economics converted to monthly display
-
-**ROI Sensitivity assumption:**
-- Sensitivity uses one-at-a-time shocks of ±10% on selected variables.
-- It does not change the base model logic; it only reruns temporary copies of the model for graphing.
-- The bars show how much ROI (x) changes from the current base case.
-
-**Cumulative Profit Over Time:**
-- Net revenue is spread evenly across treatment duration months.
-- Funnel CAC and platform costs are treated as upfront Month 1 costs for that chart only.
-- Y-axis shows dollars (cumulative profit), not ROI.
+**Cumulative Profit Over Time**
+- Net revenue spread evenly across treatment months
+- All costs applied in Month 1
+- Y-axis shows cumulative profit in dollars
 """)
