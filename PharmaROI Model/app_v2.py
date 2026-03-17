@@ -952,7 +952,7 @@ for model_idx, model_tab in enumerate(tabs[:-1]):
                 delta_color="off",
             )
             ph3.metric(
-                "ROI — Months 6-12",
+                "ROI — Months 6+",
                 roix(phase_lookup.get("Months 6-12", {}).get("ROI", 0.0)),
                 delta=f"{phase_lookup.get('Months 6-12', {}).get('Efficiency', 1.0):.0%} efficiency",
                 delta_color="off",
