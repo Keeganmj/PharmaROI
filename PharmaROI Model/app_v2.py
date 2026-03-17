@@ -249,21 +249,21 @@ def build_phase_optimization_df(fin: dict, state: dict):
 
     rows = [
         {
-            "Phase": "Months 0–3",
+            "Phase": "Months 0-3",
             "Phase Order": 1,
             "Efficiency": eff_0_3,
             "ROI": base_roi * eff_0_3,
             "Net Revenue": base_net_revenue * eff_0_3,
         },
         {
-            "Phase": "Months 3–6",
+            "Phase": "Months 3-6",
             "Phase Order": 2,
             "Efficiency": eff_3_6,
             "ROI": base_roi * eff_3_6,
             "Net Revenue": base_net_revenue * eff_3_6,
         },
         {
-            "Phase": "Months 6+",
+            "Phase": "Months 6-12",
             "Phase Order": 3,
             "Efficiency": eff_6_plus,
             "ROI": base_roi * eff_6_plus,
@@ -374,60 +374,91 @@ def plotly_comparison_bar(comp_df, y_col, title, y_title, color_map):
     )
     return fig
 
-
 def plotly_phase_step_chart(df_phase, y_col, title, y_title, line_color):
     fig = go.Figure()
+
+    phase_ranges = {
+        "Months 0-3":  (0, 3),
+        "Months 3-6":  (3, 6),
+        "Months 6-12": (6, 12),
+    }
+
+    x_vals = []
+    y_vals = []
+
+    for _, row in df_phase.iterrows():
+        phase = row["Phase"]
+        x_start, x_end = phase_ranges.get(phase, (0, 12))
+        y_val = row[y_col]
+        x_vals.extend([x_start, x_end])
+        y_vals.extend([y_val, y_val])
+
     fig.add_trace(go.Scatter(
-        x=df_phase["Phase"],
-        y=df_phase[y_col],
+        x=x_vals,
+        y=y_vals,
         mode="lines+markers",
-        name=title,
-        line=dict(color=line_color, width=3, shape="hv"),
-        marker=dict(size=10),
-        hovertemplate="Phase: %{x}<br>" + y_title + ": %{y:,.2f}<extra></extra>" if y_col == "ROI"
-        else "Phase: %{x}<br>" + y_title + ": $%{y:,.0f}<extra></extra>",
+        line=dict(color=line_color, width=3),
+        marker=dict(size=8, color=line_color),
+        hovertemplate=f"Month: %{{x}}<br>{y_title}: %{{y:,.2f}}x<extra></extra>" if y_col == "ROI"
+        else f"Month: %{{x}}<br>{y_title}: $%{{y:,.0f}}<extra></extra>",
+        showlegend=False,
     ))
+
     fig.update_layout(
         title=title,
         height=360,
         margin=dict(l=10, r=10, t=55, b=10),
-        xaxis_title="Optimization Phase",
+        xaxis=dict(title="Month", tickvals=list(range(0, 13)), range=[0, 12]),
         yaxis_title=y_title,
         showlegend=False,
         hovermode="x unified",
     )
     return fig
 
-
 def plotly_phase_comparison_chart(df_phase_comp, y_col, title, y_title, color_map):
-    fig = px.line(
-        df_phase_comp,
-        x="Phase",
-        y=y_col,
-        color="Model",
-        markers=True,
-        color_discrete_map=color_map,
-        line_group="Model",
-        category_orders={"Phase": ["Months 0–3", "Months 3–6", "Months 6+"]},
-    )
-    fig.update_traces(line_shape="hv", line=dict(width=3), marker=dict(size=9))
+    fig = go.Figure()
 
-    if y_col == "ROI":
-        fig.update_traces(hovertemplate="Model: %{fullData.name}<br>Phase: %{x}<br>ROI: %{y:.2f}x<extra></extra>")
-    else:
-        fig.update_traces(hovertemplate="Model: %{fullData.name}<br>Phase: %{x}<br>Net Revenue: $%{y:,.0f}<extra></extra>")
+    phase_ranges = {
+        "Months 0-3":  (0, 3),
+        "Months 3-6":  (3, 6),
+        "Months 6-12": (6, 12),
+    }
+
+    for model_name in df_phase_comp["Model"].unique():
+        model_df = df_phase_comp[df_phase_comp["Model"] == model_name]
+        color = color_map.get(model_name, "#0F6CBD")
+
+        x_vals = []
+        y_vals = []
+
+        for _, row in model_df.iterrows():
+            phase = row["Phase"]
+            x_start, x_end = phase_ranges.get(phase, (0, 12))
+            y_val = row[y_col]
+            x_vals.extend([x_start, x_end])
+            y_vals.extend([y_val, y_val])
+
+        fig.add_trace(go.Scatter(
+            x=x_vals,
+            y=y_vals,
+            mode="lines+markers",
+            name=model_name,
+            line=dict(color=color, width=3),
+            marker=dict(size=8, color=color),
+            hovertemplate=f"{model_name}<br>Month: %{{x}}<br>{y_title}: %{{y:.2f}}x<extra></extra>" if y_col == "ROI"
+            else f"{model_name}<br>Month: %{{x}}<br>{y_title}: $%{{y:,.0f}}<extra></extra>",
+        ))
 
     fig.update_layout(
         title=title,
         height=380,
         margin=dict(l=10, r=10, t=55, b=10),
-        xaxis_title="Optimization Phase",
+        xaxis=dict(title="Month", tickvals=list(range(0, 13)), range=[0, 12]),
         yaxis_title=y_title,
         legend_title=None,
         hovermode="x unified",
     )
     return fig
-
 
 def plotly_per_patient_costs(df_pp_costs, color_map):
     fig = px.bar(
@@ -909,9 +940,9 @@ for model_idx, model_tab in enumerate(tabs[:-1]):
                 delta_color="off",
             )
             ph3.metric(
-                "ROI — Months 6+",
-                roix(phase_lookup.get("Months 6+", {}).get("ROI", 0.0)),
-                delta=f"{phase_lookup.get('Months 6+', {}).get('Efficiency', 1.0):.0%} efficiency",
+                "ROI — Months 6-12",
+                roix(phase_lookup.get("Months 6-12", {}).get("ROI", 0.0)),
+                delta=f"{phase_lookup.get('Months 6-12', {}).get('Efficiency', 1.0):.0%} efficiency",
                 delta_color="off",
             )
             st.caption("Optimization phases use the phase-efficiency inputs to show how ROI and net revenue ramp toward full potential.")
