@@ -234,15 +234,19 @@ def run_model(state: dict):
 # -----------------------------
 # Optimization phase helper
 # -----------------------------
-def build_phase_optimization_df(fin: dict, state: dict):
+def build_phase_optimization_df(fin: dict, state: dict,
+                                 eff_0_3: float = 1.0,
+                                 eff_3_6: float = 1.0,
+                                 eff_6_plus: float = 1.0):
     if pd is None:
         return None
 
     phased_enabled = bool(state.get("phased_enabled", False))
 
-    eff_0_3 = state.get("phased_eff_0_3", 0.33) if phased_enabled else 1.0
-    eff_3_6 = state.get("phased_eff_3_6", 0.66) if phased_enabled else 1.0
-    eff_6_plus = state.get("phased_eff_6_plus", 1.0) if phased_enabled else 1.0
+    if not phased_enabled:
+        eff_0_3 = 1.0
+        eff_3_6 = 1.0
+        eff_6_plus = 1.0
 
     base_roi = float(fin["roi_net"]) if fin["roi_net"] == fin["roi_net"] else 0.0
     base_net_revenue = float(fin["net_revenue"])
@@ -892,8 +896,16 @@ for model_idx, model_tab in enumerate(tabs[:-1]):
                 state["phased_eff_3_6"] = eff_3_6
                 state["phased_eff_6_plus"] = eff_6_plus
 
+            else:
+                state["phased_eff_0_3"] = state.get("phased_eff_0_3", 0.33)
+                state["phased_eff_3_6"] = state.get("phased_eff_3_6", 0.66)
+                state["phased_eff_6_plus"] = state.get("phased_eff_6_plus", 1.0)
+
         funnel_results, fin = run_model(state)
-        phase_df = build_phase_optimization_df(fin, state) if pd is not None else None
+        _eff_0_3 = state.get("phased_eff_0_3", 0.33)
+        _eff_3_6 = state.get("phased_eff_3_6", 0.66)
+        _eff_6_plus = state.get("phased_eff_6_plus", 1.0)
+        phase_df = build_phase_optimization_df(fin, state, _eff_0_3, _eff_3_6, _eff_6_plus) if pd is not None else None
 
         tam_patients = funnel_results[0].patients
         sam_patients = funnel_results[1].patients
@@ -929,14 +941,14 @@ for model_idx, model_tab in enumerate(tabs[:-1]):
 
             ph1.metric(
                 "ROI — Months 0-3",
-                roix(phase_lookup.get("Months 0–3", {}).get("ROI", 0.0)),
-                delta=f"{phase_lookup.get('Months 0–3', {}).get('Efficiency', 1.0):.0%} efficiency",
+                roix(phase_lookup.get("Months 0-3", {}).get("ROI", 0.0)),
+                delta=f"{phase_lookup.get('Months 0-3', {}).get('Efficiency', 1.0):.0%} efficiency",
                 delta_color="off",
             )
             ph2.metric(
                 "ROI — Months 3-6",
-                roix(phase_lookup.get("Months 3–6", {}).get("ROI", 0.0)),
-                delta=f"{phase_lookup.get('Months 3–6', {}).get('Efficiency', 1.0):.0%} efficiency",
+                roix(phase_lookup.get("Months 3-6", {}).get("ROI", 0.0)),
+                delta=f"{phase_lookup.get('Months 3-6', {}).get('Efficiency', 1.0):.0%} efficiency",
                 delta_color="off",
             )
             ph3.metric(
