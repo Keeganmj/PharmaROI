@@ -978,7 +978,7 @@ for model_idx, model_tab in enumerate(tabs[:-1]):
         chart_row1_col1, chart_row1_col2 = st.columns(2)
 
         with chart_row1_col1:
-            st.plotly_chart(plotly_waterfall(fin), use_container_width=True)
+            st.plotly_chart(plotly_waterfall(fin), use_container_width=True, key=f"waterfall_{model_idx}")
 
         with chart_row1_col2:
             if pd is not None and phase_df is not None:
@@ -991,6 +991,7 @@ for model_idx, model_tab in enumerate(tabs[:-1]):
                         line_color=tab_color,
                     ),
                     use_container_width=True,
+                    key=f"phase_roi_{model_idx}"
                 )
             else:
                 st.info("Optimization phase chart requires pandas.")
@@ -1008,6 +1009,7 @@ for model_idx, model_tab in enumerate(tabs[:-1]):
                         line_color=COLORS["profit"],
                     ),
                     use_container_width=True,
+                    key=f"phase_revenue_{model_idx}"
                 )
             else:
                 st.info("Optimization phase chart requires pandas.")
@@ -1015,7 +1017,7 @@ for model_idx, model_tab in enumerate(tabs[:-1]):
         with chart_row2_col2:
             if pd is not None:
                 funnel_chart_df = pd.DataFrame([{"Stage": r.name, "Patients": r.patients} for r in funnel_results])
-                st.plotly_chart(plotly_funnel_patients(funnel_chart_df, tab_color), use_container_width=True)
+                st.plotly_chart(plotly_funnel_patients(funnel_chart_df, tab_color), use_container_width=True, key=f"funnel_patients_{model_idx}")
             else:
                 st.info("Funnel visualization requires pandas.")
 
