@@ -1124,8 +1124,8 @@ with tabs[-1]:
                 st.plotly_chart(
                     plotly_comparison_bar(
                         comp_df,
-                        "Net Revenue",
-                        "Net Revenue by Scenario",
+                        "Net Profit",
+                        "Net Profit by Scenario",
                         "USD",
                         color_map,
                     ),
