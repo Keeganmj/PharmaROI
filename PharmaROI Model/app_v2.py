@@ -630,8 +630,8 @@ init_session()
 # -----------------------------
 # Page title
 # -----------------------------
-st.set_page_config(page_title="PharmaROI V3 — Multi-Model", page_icon="📈", layout="wide")
-st.title("PharmaROI Intelligence — V3 (Multi-Model Comparison)")
+st.set_page_config(page_title="PharmaROI Calculator", page_icon="", layout="wide")
+st.title("PharmaROI Calculator")
 st.caption("Build multiple ROI models side-by-side and compare them in the Comparison tab.")
 
 # -----------------------------
