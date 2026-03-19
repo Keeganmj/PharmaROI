@@ -1413,11 +1413,15 @@ with tabs[-1]:
             help="Inferred from Net Revenue / (ARPP × Treatment Years)"
         )
         
-        st.markdown(
-            f"Gross Revenue: **{money(baseline_fin['gross_revenue'])}**  |  "
-            f"Discount: **{baseline_fin['gross_to_net_discount']*100:.1f}%**  |  "
-            f"Media Spend: **{money(baseline_fin['media_spend'])}**"
-        )
+                # Summary stats row
+        sum_col1, sum_col2, sum_col3 = st.columns(3)
+        with sum_col1:
+            st.caption(f"Gross Revenue: **{money(baseline_fin['gross_revenue'])}**")
+        with sum_col2:
+            st.caption(f"Discount: **{pct(baseline_fin['gross_to_net_discount'])}**")
+        with sum_col3:
+            st.caption(f"Media Spend: **{money(baseline_fin['media_spend'])}**")
+
         
         # Baseline detailed breakdown table
         st.markdown("#### Baseline Detailed Breakdown")
