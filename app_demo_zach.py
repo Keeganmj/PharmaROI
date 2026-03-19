@@ -108,7 +108,7 @@ BASELINE_DEFAULTS = {
     "creative_cost": 100_000.0,        # Creative / production cost
     "analytics_cost": 50_000.0,        # Analytics / measurement cost
     "other_fixed_costs": 0.0,          # Other fixed baseline costs
-    "roas": 3.0,                       # Return on Ad Spend (gross revenue / media spend)
+    "roas": 1.35,                       # Return on Ad Spend (gross revenue / media spend)
     "arpp": 47_400.0,                  # Average Revenue Per Patient (annual)
     "treatment_years": 1.0,            # Average treatment duration in years
     "gross_to_net_discount": 0.68,     # Gross-to-net discount rate
