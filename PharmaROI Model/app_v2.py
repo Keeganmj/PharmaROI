@@ -1121,7 +1121,10 @@ with tabs[-1]:
             })
 
             if pd is not None:
-                model_phase_df = build_phase_optimization_df(fin, mstate)
+                m_eff_0_3 = mstate.get("phased_eff_0_3", 0.33)
+                m_eff_3_6 = mstate.get("phased_eff_3_6", 0.66)
+                m_eff_6_plus = mstate.get("phased_eff_6_plus", 1.0)
+                model_phase_df = build_phase_optimization_df(fin, mstate, m_eff_0_3, m_eff_3_6, m_eff_6_plus)
                 if model_phase_df is not None:
                     model_phase_df = model_phase_df.copy()
                     model_phase_df["Model"] = mname
