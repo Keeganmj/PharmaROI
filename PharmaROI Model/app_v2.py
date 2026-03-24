@@ -22,6 +22,7 @@ import plotly.graph_objects as go
 from openpyxl import Workbook
 from openpyxl.styles import Font, PatternFill, Alignment
 from openpyxl.utils import get_column_letter
+import datetime
 
 # -----------------------------
 # Color palette
@@ -495,12 +496,11 @@ def plotly_per_patient_costs(df_pp_costs, color_map):
 # -----------------------------
 # Excel export helpers
 # -----------------------------
-def build_polished_excel_report(df_funnel, fin, colors):
+def build_polished_excel_report(df_funnel, fin, colors, state=None, model_name="Model"):
     wb = Workbook()
     header_fill = PatternFill("solid", fgColor="0F172A")
     header_font = Font(bold=True, color="FFFFFF")
     bold_font = Font(bold=True)
-    muted_font = Font(color="6B7280")
     center = Alignment(horizontal="center", vertical="center")
     left = Alignment(horizontal="left", vertical="center")
 
@@ -518,7 +518,7 @@ def build_polished_excel_report(df_funnel, fin, colors):
     ws_sum.title = "Summary"
     ws_sum["A1"] = "PharmaROI Intelligence — Sponsor Summary"
     ws_sum["A1"].font = Font(bold=True, size=14)
-    ws_sum.merge_cells("A1:D1")
+    ws_sum.merge_cells("A1:B1")
 
     summary_rows = [
         ("Treated Patients", fin["treated_patients"], "0"),
@@ -533,8 +533,6 @@ def build_polished_excel_report(df_funnel, fin, colors):
 
     ws_sum["A3"] = "Metric"
     ws_sum["B3"] = "Value"
-    ws_sum["C3"] = "Format"
-    ws_sum["D3"] = "Notes"
     style_header_row(ws_sum, 3)
 
     start_row = 4
@@ -542,16 +540,13 @@ def build_polished_excel_report(df_funnel, fin, colors):
         r = start_row + i
         ws_sum[f"A{r}"] = label
         ws_sum[f"B{r}"] = float(value) if value == value else None
-        ws_sum[f"C{r}"] = fmt
-        ws_sum[f"D{r}"] = ""
         ws_sum[f"A{r}"].font = bold_font if label in ("Net Revenue", "ROI (Net)", "Net Profit") else Font()
         ws_sum[f"A{r}"].alignment = left
         ws_sum[f"B{r}"].alignment = left
-        ws_sum[f"C{r}"].font = muted_font
         ws_sum[f"B{r}"].number_format = fmt
 
     ws_sum.freeze_panes = "A4"
-    set_col_widths(ws_sum, {1: 26, 2: 18, 3: 12, 4: 20})
+    set_col_widths(ws_sum, {1: 26, 2: 18})
 
     ws_fun = wb.create_sheet("Funnel")
     headers = list(df_funnel.columns)
@@ -582,6 +577,55 @@ def build_polished_excel_report(df_funnel, fin, colors):
     fmt_col("Net Activation Ratio", "0.00%")
     set_col_widths(ws_fun, {1: 5, 2: 52, 3: 22, 4: 12, 5: 14, 6: 12, 7: 15, 8: 18, 9: 14, 10: 14, 11: 18})
 
+    ws_meta = wb.create_sheet("Metadata")
+    ws_meta["A1"] = "PharmaROI Export Metadata"
+    ws_meta["A1"].font = Font(bold=True, size=13)
+    meta_rows = [
+        ("Export Date", datetime.datetime.now().strftime("%Y-%m-%d %H:%M")),
+        ("Model Name", model_name),
+    ]
+    if state:
+        meta_rows += [
+            ("Base Population", state.get("base_population", "")),
+            ("ARPP ($/year)", state.get("arpp", "")),
+            ("Discount", state.get("discount", "")),
+            ("Treatment Years", state.get("treatment_years", "")),
+        ]
+    for row_i, (label, value) in enumerate(meta_rows, start=3):
+        ws_meta[f"A{row_i}"] = label
+        ws_meta[f"B{row_i}"] = value
+        ws_meta[f"A{row_i}"].font = Font(bold=True)
+    set_col_widths(ws_meta, {1: 24, 2: 28})
+
+    ws_plat = wb.create_sheet("Platform Costs")
+    ws_plat["A1"] = "Platform Cost Breakdown"
+    ws_plat["A1"].font = Font(bold=True, size=13)
+    ws_plat["A3"] = "Line Item"
+    ws_plat["B3"] = "Amount"
+    for cell in [ws_plat["A3"], ws_plat["B3"]]:
+        cell.fill = header_fill
+        cell.font = header_font
+        cell.alignment = center
+    plat_labels = {
+        "dario_connect_config": "Dario Connect Configuration",
+        "dario_care_config": "Dario Care Configuration",
+        "sub_dario_connect": "Subscription — Dario Connect",
+        "sub_dario_care": "Subscription — Dario Care",
+        "maintenance_support": "Maintenance & Support",
+    }
+    if state and "platform_costs" in state:
+        pc = state["platform_costs"]
+        for row_i, (key, label) in enumerate(plat_labels.items(), start=4):
+            ws_plat.cell(row=row_i, column=1, value=label)
+            ws_plat.cell(row=row_i, column=2, value=float(pc.get(key, 0)))
+            ws_plat.cell(row=row_i, column=2).number_format = "$#,##0"
+        total_row = 4 + len(plat_labels)
+        ws_plat.cell(row=total_row, column=1, value="Total Platform Costs").font = Font(bold=True)
+        ws_plat.cell(row=total_row, column=2, value=sum(pc.values()))
+        ws_plat.cell(row=total_row, column=2).number_format = "$#,##0"
+        ws_plat.cell(row=total_row, column=2).font = Font(bold=True)
+    set_col_widths(ws_plat, {1: 34, 2: 18})
+
     buffer = io.BytesIO()
     wb.save(buffer)
     buffer.seek(0)
@@ -611,6 +655,21 @@ def build_simple_excel(df, sheet_name="Data"):
         max_len = max(len(str(col)), *(len(str(v)) for v in df[col].head(100).tolist())) if len(df) > 0 else len(str(col))
         ws.column_dimensions[get_column_letter(i)].width = min(max(max_len + 2, 12), 32)
 
+    for i, col in enumerate(df.columns, start=1):
+        if any(word in col for word in ["Patient", "Count"]):
+            num_fmt = "#,##0"
+        elif any(word in col for word in ["Cost", "CAC", "Revenue", "Profit", "ARPP"]):
+            num_fmt = "$#,##0"
+        elif any(word in col for word in ["Efficiency", "Discount"]):
+            num_fmt = "0.0%"
+        elif "ROI" in col:
+            num_fmt = "0.00x"
+        else:
+            num_fmt = None
+        if num_fmt:
+            for row_idx in range(2, len(df) + 2):
+                ws.cell(row=row_idx, column=i).number_format = num_fmt
+
     buffer = io.BytesIO()
     wb.save(buffer)
     buffer.seek(0)
@@ -624,6 +683,117 @@ def init_session():
         st.session_state["models"] = [copy.deepcopy(SPONSOR_DEFAULTS)]
         st.session_state["model_names"] = ["Model 1"]
         st.session_state["active_model_idx"] = 0
+
+def build_comparison_excel(comp_df, per_patient_df, phase_comp_df, diff_df, model_names):
+    import datetime
+    wb = Workbook()
+    header_fill = PatternFill("solid", fgColor="0F172A")
+    header_font = Font(bold=True, color="FFFFFF")
+    center = Alignment(horizontal="center", vertical="center")
+    green_fill = PatternFill("solid", fgColor="D1FAE5")
+    amber_fill = PatternFill("solid", fgColor="FEF3C7")
+
+    def write_df_to_sheet(ws, df, col_formats=None):
+        for col_idx, col_name in enumerate(df.columns, start=1):
+            cell = ws.cell(row=1, column=col_idx, value=col_name)
+            cell.fill = header_fill
+            cell.font = header_font
+            cell.alignment = center
+        for row_idx, row in enumerate(df.itertuples(index=False), start=2):
+            for col_idx, val in enumerate(row, start=1):
+                ws.cell(row=row_idx, column=col_idx, value=val)
+        if col_formats:
+            for col_idx, col_name in enumerate(df.columns, start=1):
+                fmt = col_formats.get(col_name)
+                if fmt:
+                    for row_idx in range(2, len(df) + 2):
+                        ws.cell(row=row_idx, column=col_idx).number_format = fmt
+        for i, col in enumerate(df.columns, start=1):
+            max_len = max(len(str(col)), *(len(str(v)) for v in df[col].head(50).tolist())) if len(df) > 0 else len(str(col))
+            ws.column_dimensions[get_column_letter(i)].width = min(max(max_len + 2, 14), 36)
+
+    # Sheet 1 — Key Metrics
+    ws1 = wb.active
+    ws1.title = "Key Metrics"
+    metrics_formats = {
+        "Treated Patients": "#,##0",
+        "Gross Revenue": "$#,##0",
+        "Net Revenue": "$#,##0",
+        "Funnel CAC": "$#,##0",
+        "Platform Costs": "$#,##0",
+        "Total Cost": "$#,##0",
+        "Net Profit": "$#,##0",
+        "ARPP": "$#,##0",
+        "Discount": "0.0%",
+        "ROI (Net)": "0.00x",
+        "Funnel CAC per Treated Patient": "$#,##0",
+        "Platform Costs per Treated Patient": "$#,##0",
+        "Total Cost per Treated Patient": "$#,##0",
+    }
+    write_df_to_sheet(ws1, comp_df, metrics_formats)
+
+    # Conditional formatting — green = best, amber = worst
+    higher_is_better = {"ROI (Net)", "Net Profit", "Net Revenue", "Treated Patients", "Gross Revenue"}
+    lower_is_better = {"Total Cost", "Funnel CAC", "Platform Costs", "Total Cost per Treated Patient",
+                       "Funnel CAC per Treated Patient", "Platform Costs per Treated Patient"}
+    for col_idx, col_name in enumerate(comp_df.columns, start=1):
+        if col_name in higher_is_better or col_name in lower_is_better:
+            col_vals = comp_df[col_name].tolist()
+            try:
+                best = max(col_vals) if col_name in higher_is_better else min(col_vals)
+                worst = min(col_vals) if col_name in higher_is_better else max(col_vals)
+                for row_idx, val in enumerate(col_vals, start=2):
+                    if val == best:
+                        ws1.cell(row=row_idx, column=col_idx).fill = green_fill
+                    elif val == worst:
+                        ws1.cell(row=row_idx, column=col_idx).fill = amber_fill
+            except Exception:
+                pass
+
+    # Sheet 2 — Per Patient Costs
+    ws2 = wb.create_sheet("Per Patient Costs")
+    pp_formats = {
+        "Treated Patients": "#,##0",
+        "Funnel CAC per Treated Patient": "$#,##0",
+        "Platform Costs per Treated Patient": "$#,##0",
+        "Total Cost per Treated Patient": "$#,##0",
+    }
+    write_df_to_sheet(ws2, per_patient_df, pp_formats)
+
+    # Sheet 3 — Optimization Phases
+    if phase_comp_df is not None and len(phase_comp_df) > 0:
+        ws3 = wb.create_sheet("Optimization Phases")
+        phase_formats = {
+            "ROI": "0.00x",
+            "Net Revenue": "$#,##0",
+            "Efficiency": "0.0%",
+        }
+        write_df_to_sheet(ws3, phase_comp_df, phase_formats)
+
+    # Sheet 4 — Model Diff
+    if diff_df is not None and len(diff_df) > 0:
+        ws4 = wb.create_sheet("Model Diff")
+        write_df_to_sheet(ws4, diff_df)
+
+    # Sheet 5 — Metadata
+    ws5 = wb.create_sheet("Metadata")
+    ws5["A1"] = "Comparison Export Metadata"
+    ws5["A1"].font = Font(bold=True, size=13)
+    ws5["A3"] = "Export Date"
+    ws5["B3"] = datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
+    ws5["A4"] = "Models Compared"
+    ws5["B4"] = ", ".join(model_names)
+    ws5["A5"] = "Number of Models"
+    ws5["B5"] = len(model_names)
+    for row in [3, 4, 5]:
+        ws5[f"A{row}"].font = Font(bold=True)
+    ws5.column_dimensions["A"].width = 22
+    ws5.column_dimensions["B"].width = 40
+
+    buffer = io.BytesIO()
+    wb.save(buffer)
+    buffer.seek(0)
+    return buffer.getvalue()
 
 init_session()
 
@@ -997,7 +1167,7 @@ for model_idx, model_tab in enumerate(tabs[:-1]):
             st.markdown("### Export")
             ec1, ec2 = st.columns(2)
             with ec1:
-                xlsx_bytes = build_polished_excel_report(df_funnel, fin, COLORS)
+                xlsx_bytes = build_polished_excel_report(df_funnel, fin, COLORS, state=state, model_name=model_name)
                 st.download_button(
                     "⬇️ Download Excel Report",
                     data=xlsx_bytes,
@@ -1156,25 +1326,13 @@ with tabs[-1]:
 
             with chart_col1:
                 st.plotly_chart(
-                    plotly_comparison_bar(
-                        comp_df,
-                        "ROI (Net)",
-                        "Net ROI by Scenario",
-                        "ROI (x)",
-                        color_map,
-                    ),
+                    plotly_comparison_bar(comp_df, "ROI (Net)", "Net ROI by Scenario", "ROI (x)", color_map),
                     use_container_width=True,
                 )
 
             with chart_col2:
                 st.plotly_chart(
-                    plotly_comparison_bar(
-                        comp_df,
-                        "Net Profit",
-                        "Net Profit by Scenario",
-                        "USD",
-                        color_map,
-                    ),
+                    plotly_comparison_bar(comp_df, "Net Profit", "Net Profit by Scenario", "USD", color_map),
                     use_container_width=True,
                 )
 
@@ -1182,79 +1340,26 @@ with tabs[-1]:
 
             with chart_col3:
                 st.plotly_chart(
-                    plotly_comparison_bar(
-                        comp_df,
-                        "Treated Patients",
-                        "Treated Patients by Scenario",
-                        "Patients",
-                        color_map,
-                    ),
+                    plotly_comparison_bar(comp_df, "Treated Patients", "Treated Patients by Scenario", "Patients", color_map),
                     use_container_width=True,
-                )
-                treated_patients_export = comp_df[["Model", "Treated Patients"]].copy()
-                st.download_button(
-                    "Download Treated Patients Data (Excel)",
-                    data=build_simple_excel(treated_patients_export, "Treated Patients"),
-                    file_name="treated_patients_by_scenario.xlsx",
-                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                    key="dl_treated_patients_by_scenario",
                 )
 
             with chart_col4:
                 st.plotly_chart(
-                    plotly_comparison_bar(
-                        comp_df,
-                        "Total Cost",
-                        "Total Investment by Scenario",
-                        "USD",
-                        color_map,
-                    ),
+                    plotly_comparison_bar(comp_df, "Total Cost", "Total Investment by Scenario", "USD", color_map),
                     use_container_width=True,
                 )
 
             st.markdown("### Per-Patient Cost Comparison")
             st.caption("Compares acquisition and platform investment on a per-treated-patient basis across selected scenarios.")
 
-            per_patient_cost_df = pd.DataFrame([
-                {
-                    "Model": row["Model"],
-                    "Metric": "Funnel CAC per Treated Patient",
-                    "Cost per Treated Patient": row["Funnel CAC per Treated Patient"],
-                }
-                for _, row in comp_df.iterrows()
-            ] + [
-                {
-                    "Model": row["Model"],
-                    "Metric": "Platform Costs per Treated Patient",
-                    "Cost per Treated Patient": row["Platform Costs per Treated Patient"],
-                }
-                for _, row in comp_df.iterrows()
-            ] + [
-                {
-                    "Model": row["Model"],
-                    "Metric": "Total Cost per Treated Patient",
-                    "Cost per Treated Patient": row["Total Cost per Treated Patient"],
-                }
-                for _, row in comp_df.iterrows()
-            ])
+            per_patient_cost_df = pd.DataFrame(
+                [{"Model": row["Model"], "Metric": "Funnel CAC per Treated Patient", "Cost per Treated Patient": row["Funnel CAC per Treated Patient"]} for _, row in comp_df.iterrows()] +
+                [{"Model": row["Model"], "Metric": "Platform Costs per Treated Patient", "Cost per Treated Patient": row["Platform Costs per Treated Patient"]} for _, row in comp_df.iterrows()] +
+                [{"Model": row["Model"], "Metric": "Total Cost per Treated Patient", "Cost per Treated Patient": row["Total Cost per Treated Patient"]} for _, row in comp_df.iterrows()]
+            )
 
             st.plotly_chart(plotly_per_patient_costs(per_patient_cost_df, color_map), use_container_width=True)
-
-            per_patient_export_df = comp_df[[
-                "Model",
-                "Treated Patients",
-                "Funnel CAC per Treated Patient",
-                "Platform Costs per Treated Patient",
-                "Total Cost per Treated Patient",
-            ]].copy()
-
-            st.download_button(
-                "Download Per-Patient Cost Data (Excel)",
-                data=build_simple_excel(per_patient_export_df, "Per Patient Costs"),
-                file_name="per_patient_cost_comparison.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                key="dl_per_patient_cost_comparison",
-            )
 
             if phase_rows:
                 st.markdown("### Optimization Comparison by Phase")
@@ -1263,45 +1368,19 @@ with tabs[-1]:
                 op1, op2 = st.columns(2)
                 with op1:
                     st.plotly_chart(
-                        plotly_phase_comparison_chart(
-                            phase_comp_df,
-                            y_col="ROI",
-                            title="Optimization ROI by Phase Across Scenarios",
-                            y_title="ROI (x)",
-                            color_map=color_map,
-                        ),
+                        plotly_phase_comparison_chart(phase_comp_df, y_col="ROI", title="Optimization ROI by Phase Across Scenarios", y_title="ROI (x)", color_map=color_map),
                         use_container_width=True,
                     )
-
                 with op2:
                     st.plotly_chart(
-                        plotly_phase_comparison_chart(
-                            phase_comp_df,
-                            y_col="Net Revenue",
-                            title="Optimization Net Revenue by Phase Across Scenarios",
-                            y_title="Net Revenue",
-                            color_map=color_map,
-                        ),
+                        plotly_phase_comparison_chart(phase_comp_df, y_col="Net Revenue", title="Optimization Net Revenue by Phase Across Scenarios", y_title="Net Revenue", color_map=color_map),
                         use_container_width=True,
                     )
-
-                optimization_export_df = phase_comp_df[[
-                    "Model",
-                    "Phase",
-                    "Efficiency",
-                    "ROI",
-                    "Net Revenue",
-                ]].copy()
-
-                st.download_button(
-                    "Download Optimization Phase Data (Excel)",
-                    data=build_simple_excel(optimization_export_df, "Optimization Phases"),
-                    file_name="optimization_phase_comparison.xlsx",
-                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                    key="dl_optimization_phase_comparison",
-                )
+            else:
+                phase_comp_df = None
 
             st.markdown("### Model Diff View")
+            diff_rows = []
             if len(selected_names) >= 2:
                 diff_col1, diff_col2 = st.columns(2)
                 with diff_col1:
@@ -1314,8 +1393,6 @@ with tabs[-1]:
                 idx_b = st.session_state["model_names"].index(diff_model_b)
                 state_a = st.session_state["models"][idx_a]
                 state_b = st.session_state["models"][idx_b]
-
-                diff_rows = []
 
                 top_params = [
                     ("Base Population", "base_population", "{:,.0f}"),
@@ -1359,11 +1436,37 @@ with tabs[-1]:
                     diff_df = pd.DataFrame(diff_rows)
                     st.dataframe(diff_df, use_container_width=True, hide_index=True)
                 else:
+                    diff_df = None
                     st.success("These two models have identical parameters!")
             else:
+                diff_df = None
                 st.info("Select at least 2 models above to see a diff view.")
 
             st.markdown("### Export Comparison")
+
+            per_patient_export_df = comp_df[[
+                "Model",
+                "Treated Patients",
+                "Funnel CAC per Treated Patient",
+                "Platform Costs per Treated Patient",
+                "Total Cost per Treated Patient",
+            ]].copy()
+
+            comparison_excel_bytes = build_comparison_excel(
+                comp_df=comp_df,
+                per_patient_df=per_patient_export_df,
+                phase_comp_df=phase_comp_df,
+                diff_df=diff_df,
+                model_names=selected_names,
+            )
+            st.download_button(
+                "⬇️ Download Full Comparison Report (Excel)",
+                data=comparison_excel_bytes,
+                file_name="pharmaroi_comparison_report.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                key="dl_full_comparison",
+            )
+
             comp_csv = comp_df.to_csv(index=False).encode("utf-8")
             st.download_button(
                 "⬇️ Download Comparison CSV",
