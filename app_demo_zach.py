@@ -22,6 +22,7 @@ import plotly.graph_objects as go
 from openpyxl import Workbook
 from openpyxl.styles import Font, PatternFill, Alignment
 from openpyxl.utils import get_column_letter
+import datetime
 
 # -----------------------------
 # Color palette
@@ -148,35 +149,35 @@ def compute_baseline_financials(
 ) -> dict:
     """
     Compute baseline financials for a traditional ad-agency / paid media approach.
-    
+
     This is ENTIRELY INDEPENDENT of the Dario funnel model.
     It does NOT use Stage 6, funnel ratios, funnel CAC, or any Dario-specific logic.
-    
+
     Formulas:
     ---------
     total_baseline_investment = media_spend + agency_fee + creative_cost + analytics_cost + other_fixed_costs
         -> The total amount invested in the baseline paid media campaign.
-    
+
     gross_revenue = media_spend * roas
         -> ROAS is defined as gross revenue generated per dollar of media spend.
         -> This is industry-standard: ROAS = Gross Revenue / Media Spend.
-    
+
     net_revenue = gross_revenue * (1 - gross_to_net_discount)
         -> Net revenue after applying the gross-to-net discount (e.g., rebates, chargebacks).
-    
+
     net_profit = net_revenue - total_baseline_investment
         -> Profit after subtracting all baseline costs from net revenue.
-    
+
     baseline_roi_net = net_profit / total_baseline_investment
         -> ROI (Net) is defined as net profit divided by total investment.
         -> This is distinct from ROAS: ROI measures profit return, ROAS measures revenue return.
-    
+
     estimated_treated_patients = net_revenue / (arpp * treatment_years)
         -> Inferred patient count based on net revenue and per-patient value.
-        -> Note: This uses net_revenue (already discounted), divided by the 
+        -> Note: This uses net_revenue (already discounted), divided by the
            per-patient net value (arpp * treatment_years).
         -> We do NOT apply the discount again to ARPP since net_revenue is already net.
-    
+
     Returns a dict with all computed baseline metrics.
     """
     # Ensure non-negative inputs
@@ -189,34 +190,32 @@ def compute_baseline_financials(
     arpp = max(0.0, float(arpp))
     treatment_years = max(0.0, float(treatment_years))
     gross_to_net_discount = clamp(gross_to_net_discount, 0.0, 1.0)
-    
+
     # Total investment (all baseline costs)
     total_baseline_investment = media_spend + agency_fee + creative_cost + analytics_cost + other_fixed_costs
-    
+
     # Gross revenue from ROAS (ROAS applies to media spend only, per industry convention)
     gross_revenue = media_spend * roas
-    
+
     # Net revenue after gross-to-net discount
     net_revenue = gross_revenue * (1.0 - gross_to_net_discount)
-    
+
     # Net profit
     net_profit = net_revenue - total_baseline_investment
-    
+
     # ROI (Net) = Net Profit / Total Investment
-    # This is distinct from ROAS. ROI measures profit return on total investment.
     if total_baseline_investment > 0:
         baseline_roi_net = net_profit / total_baseline_investment
     else:
         baseline_roi_net = float("nan")
-    
+
     # Estimated treated patients (inferred from net revenue)
-    # net_revenue is already post-discount, so we divide by per-patient net value
     per_patient_net_value = arpp * treatment_years
     if per_patient_net_value > 0:
         estimated_treated_patients = net_revenue / per_patient_net_value
     else:
         estimated_treated_patients = 0.0
-    
+
     return {
         "media_spend": media_spend,
         "agency_fee": agency_fee,
@@ -506,16 +505,16 @@ def plotly_baseline_combined_bar(comp_df, baseline_row, y_col, title, y_title, c
     """
     if pd is None:
         return None
-    
+
     # Add baseline as a row
     combined_df = comp_df[["Model", y_col]].copy()
     baseline_df = pd.DataFrame([{"Model": "Baseline (Traditional)", y_col: baseline_row[y_col]}])
     combined_df = pd.concat([combined_df, baseline_df], ignore_index=True)
-    
+
     # Extend color map for baseline
     extended_color_map = color_map.copy()
     extended_color_map["Baseline (Traditional)"] = COLORS["baseline"]
-    
+
     fig = px.bar(combined_df, x="Model", y=y_col, color="Model", color_discrete_map=extended_color_map, text=y_col)
 
     if "ROI" in y_col or "ROAS" in y_col:
@@ -577,6 +576,7 @@ def plotly_phase_step_chart(df_phase, y_col, title, y_title, line_color):
     )
     return fig
 
+
 def plotly_phase_comparison_chart(df_phase_comp, y_col, title, y_title, color_map):
     fig = go.Figure()
 
@@ -622,6 +622,7 @@ def plotly_phase_comparison_chart(df_phase_comp, y_col, title, y_title, color_ma
     )
     return fig
 
+
 def plotly_per_patient_costs(df_pp_costs, color_map):
     fig = px.bar(
         df_pp_costs,
@@ -653,12 +654,11 @@ def plotly_per_patient_costs(df_pp_costs, color_map):
 # -----------------------------
 # Excel export helpers
 # -----------------------------
-def build_polished_excel_report(df_funnel, fin, colors):
+def build_polished_excel_report(df_funnel, fin, colors, state=None, model_name="Model"):
     wb = Workbook()
     header_fill = PatternFill("solid", fgColor="0F172A")
     header_font = Font(bold=True, color="FFFFFF")
     bold_font = Font(bold=True)
-    muted_font = Font(color="6B7280")
     center = Alignment(horizontal="center", vertical="center")
     left = Alignment(horizontal="left", vertical="center")
 
@@ -676,7 +676,7 @@ def build_polished_excel_report(df_funnel, fin, colors):
     ws_sum.title = "Summary"
     ws_sum["A1"] = "PharmaROI Intelligence — Sponsor Summary"
     ws_sum["A1"].font = Font(bold=True, size=14)
-    ws_sum.merge_cells("A1:D1")
+    ws_sum.merge_cells("A1:B1")
 
     summary_rows = [
         ("Treated Patients", fin["treated_patients"], "0"),
@@ -691,8 +691,6 @@ def build_polished_excel_report(df_funnel, fin, colors):
 
     ws_sum["A3"] = "Metric"
     ws_sum["B3"] = "Value"
-    ws_sum["C3"] = "Format"
-    ws_sum["D3"] = "Notes"
     style_header_row(ws_sum, 3)
 
     start_row = 4
@@ -700,16 +698,13 @@ def build_polished_excel_report(df_funnel, fin, colors):
         r = start_row + i
         ws_sum[f"A{r}"] = label
         ws_sum[f"B{r}"] = float(value) if value == value else None
-        ws_sum[f"C{r}"] = fmt
-        ws_sum[f"D{r}"] = ""
         ws_sum[f"A{r}"].font = bold_font if label in ("Net Revenue", "ROI (Net)", "Net Profit") else Font()
         ws_sum[f"A{r}"].alignment = left
         ws_sum[f"B{r}"].alignment = left
-        ws_sum[f"C{r}"].font = muted_font
         ws_sum[f"B{r}"].number_format = fmt
 
     ws_sum.freeze_panes = "A4"
-    set_col_widths(ws_sum, {1: 26, 2: 18, 3: 12, 4: 20})
+    set_col_widths(ws_sum, {1: 26, 2: 18})
 
     ws_fun = wb.create_sheet("Funnel")
     headers = list(df_funnel.columns)
@@ -740,6 +735,55 @@ def build_polished_excel_report(df_funnel, fin, colors):
     fmt_col("Net Activation Ratio", "0.00%")
     set_col_widths(ws_fun, {1: 5, 2: 52, 3: 22, 4: 12, 5: 14, 6: 12, 7: 15, 8: 18, 9: 14, 10: 14, 11: 18})
 
+    ws_meta = wb.create_sheet("Metadata")
+    ws_meta["A1"] = "PharmaROI Export Metadata"
+    ws_meta["A1"].font = Font(bold=True, size=13)
+    meta_rows = [
+        ("Export Date", datetime.datetime.now().strftime("%Y-%m-%d %H:%M")),
+        ("Model Name", model_name),
+    ]
+    if state:
+        meta_rows += [
+            ("Base Population", state.get("base_population", "")),
+            ("ARPP ($/year)", state.get("arpp", "")),
+            ("Discount", state.get("discount", "")),
+            ("Treatment Years", state.get("treatment_years", "")),
+        ]
+    for row_i, (label, value) in enumerate(meta_rows, start=3):
+        ws_meta[f"A{row_i}"] = label
+        ws_meta[f"B{row_i}"] = value
+        ws_meta[f"A{row_i}"].font = Font(bold=True)
+    set_col_widths(ws_meta, {1: 24, 2: 28})
+
+    ws_plat = wb.create_sheet("Platform Costs")
+    ws_plat["A1"] = "Platform Cost Breakdown"
+    ws_plat["A1"].font = Font(bold=True, size=13)
+    ws_plat["A3"] = "Line Item"
+    ws_plat["B3"] = "Amount"
+    for cell in [ws_plat["A3"], ws_plat["B3"]]:
+        cell.fill = header_fill
+        cell.font = header_font
+        cell.alignment = center
+    plat_labels = {
+        "dario_connect_config": "Dario Connect Configuration",
+        "dario_care_config": "Dario Care Configuration",
+        "sub_dario_connect": "Subscription — Dario Connect",
+        "sub_dario_care": "Subscription — Dario Care",
+        "maintenance_support": "Maintenance & Support",
+    }
+    if state and "platform_costs" in state:
+        pc = state["platform_costs"]
+        for row_i, (key, label) in enumerate(plat_labels.items(), start=4):
+            ws_plat.cell(row=row_i, column=1, value=label)
+            ws_plat.cell(row=row_i, column=2, value=float(pc.get(key, 0)))
+            ws_plat.cell(row=row_i, column=2).number_format = "$#,##0"
+        total_row = 4 + len(plat_labels)
+        ws_plat.cell(row=total_row, column=1, value="Total Platform Costs").font = Font(bold=True)
+        ws_plat.cell(row=total_row, column=2, value=sum(pc.values()))
+        ws_plat.cell(row=total_row, column=2).number_format = "$#,##0"
+        ws_plat.cell(row=total_row, column=2).font = Font(bold=True)
+    set_col_widths(ws_plat, {1: 34, 2: 18})
+
     buffer = io.BytesIO()
     wb.save(buffer)
     buffer.seek(0)
@@ -769,6 +813,132 @@ def build_simple_excel(df, sheet_name="Data"):
         max_len = max(len(str(col)), *(len(str(v)) for v in df[col].head(100).tolist())) if len(df) > 0 else len(str(col))
         ws.column_dimensions[get_column_letter(i)].width = min(max(max_len + 2, 12), 32)
 
+    for i, col in enumerate(df.columns, start=1):
+        if any(word in col for word in ["Patient", "Count"]):
+            num_fmt = "#,##0"
+        elif any(word in col for word in ["Cost", "CAC", "Revenue", "Profit", "ARPP"]):
+            num_fmt = "$#,##0"
+        elif any(word in col for word in ["Efficiency", "Discount"]):
+            num_fmt = "0.0%"
+        elif "ROI" in col:
+            num_fmt = "0.00x"
+        else:
+            num_fmt = None
+        if num_fmt:
+            for row_idx in range(2, len(df) + 2):
+                ws.cell(row=row_idx, column=i).number_format = num_fmt
+
+    buffer = io.BytesIO()
+    wb.save(buffer)
+    buffer.seek(0)
+    return buffer.getvalue()
+
+
+def build_comparison_excel(comp_df, per_patient_df, phase_comp_df, diff_df, model_names):
+    wb = Workbook()
+    header_fill = PatternFill("solid", fgColor="0F172A")
+    header_font = Font(bold=True, color="FFFFFF")
+    center = Alignment(horizontal="center", vertical="center")
+    green_fill = PatternFill("solid", fgColor="D1FAE5")
+    amber_fill = PatternFill("solid", fgColor="FEF3C7")
+
+    def write_df_to_sheet(ws, df, col_formats=None):
+        for col_idx, col_name in enumerate(df.columns, start=1):
+            cell = ws.cell(row=1, column=col_idx, value=col_name)
+            cell.fill = header_fill
+            cell.font = header_font
+            cell.alignment = center
+        for row_idx, row in enumerate(df.itertuples(index=False), start=2):
+            for col_idx, val in enumerate(row, start=1):
+                ws.cell(row=row_idx, column=col_idx, value=val)
+        if col_formats:
+            for col_idx, col_name in enumerate(df.columns, start=1):
+                fmt = col_formats.get(col_name)
+                if fmt:
+                    for row_idx in range(2, len(df) + 2):
+                        ws.cell(row=row_idx, column=col_idx).number_format = fmt
+        for i, col in enumerate(df.columns, start=1):
+            max_len = max(len(str(col)), *(len(str(v)) for v in df[col].head(50).tolist())) if len(df) > 0 else len(str(col))
+            ws.column_dimensions[get_column_letter(i)].width = min(max(max_len + 2, 14), 36)
+
+    # Sheet 1 — Key Metrics
+    ws1 = wb.active
+    ws1.title = "Key Metrics"
+    metrics_formats = {
+        "Treated Patients": "#,##0",
+        "Gross Revenue": "$#,##0",
+        "Net Revenue": "$#,##0",
+        "Funnel CAC": "$#,##0",
+        "Platform Costs": "$#,##0",
+        "Total Cost": "$#,##0",
+        "Net Profit": "$#,##0",
+        "ARPP": "$#,##0",
+        "Discount": "0.0%",
+        "ROI (Net)": "0.00x",
+        "Funnel CAC per Treated Patient": "$#,##0",
+        "Platform Costs per Treated Patient": "$#,##0",
+        "Total Cost per Treated Patient": "$#,##0",
+    }
+    write_df_to_sheet(ws1, comp_df, metrics_formats)
+
+    # Conditional formatting — green = best, amber = worst
+    higher_is_better = {"ROI (Net)", "Net Profit", "Net Revenue", "Treated Patients", "Gross Revenue"}
+    lower_is_better = {"Total Cost", "Funnel CAC", "Platform Costs", "Total Cost per Treated Patient",
+                       "Funnel CAC per Treated Patient", "Platform Costs per Treated Patient"}
+    for col_idx, col_name in enumerate(comp_df.columns, start=1):
+        if col_name in higher_is_better or col_name in lower_is_better:
+            col_vals = comp_df[col_name].tolist()
+            try:
+                best = max(col_vals) if col_name in higher_is_better else min(col_vals)
+                worst = min(col_vals) if col_name in higher_is_better else max(col_vals)
+                for row_idx, val in enumerate(col_vals, start=2):
+                    if val == best:
+                        ws1.cell(row=row_idx, column=col_idx).fill = green_fill
+                    elif val == worst:
+                        ws1.cell(row=row_idx, column=col_idx).fill = amber_fill
+            except Exception:
+                pass
+
+    # Sheet 2 — Per Patient Costs
+    ws2 = wb.create_sheet("Per Patient Costs")
+    pp_formats = {
+        "Treated Patients": "#,##0",
+        "Funnel CAC per Treated Patient": "$#,##0",
+        "Platform Costs per Treated Patient": "$#,##0",
+        "Total Cost per Treated Patient": "$#,##0",
+    }
+    write_df_to_sheet(ws2, per_patient_df, pp_formats)
+
+    # Sheet 3 — Optimization Phases
+    if phase_comp_df is not None and len(phase_comp_df) > 0:
+        ws3 = wb.create_sheet("Optimization Phases")
+        phase_formats = {
+            "ROI": "0.00x",
+            "Net Revenue": "$#,##0",
+            "Efficiency": "0.0%",
+        }
+        write_df_to_sheet(ws3, phase_comp_df, phase_formats)
+
+    # Sheet 4 — Model Diff
+    if diff_df is not None and len(diff_df) > 0:
+        ws4 = wb.create_sheet("Model Diff")
+        write_df_to_sheet(ws4, diff_df)
+
+    # Sheet 5 — Metadata
+    ws5 = wb.create_sheet("Metadata")
+    ws5["A1"] = "Comparison Export Metadata"
+    ws5["A1"].font = Font(bold=True, size=13)
+    ws5["A3"] = "Export Date"
+    ws5["B3"] = datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
+    ws5["A4"] = "Models Compared"
+    ws5["B4"] = ", ".join(model_names)
+    ws5["A5"] = "Number of Models"
+    ws5["B5"] = len(model_names)
+    for row in [3, 4, 5]:
+        ws5[f"A{row}"].font = Font(bold=True)
+    ws5.column_dimensions["A"].width = 22
+    ws5.column_dimensions["B"].width = 40
+
     buffer = io.BytesIO()
     wb.save(buffer)
     buffer.seek(0)
@@ -782,11 +952,11 @@ def init_session():
         st.session_state["models"] = [copy.deepcopy(SPONSOR_DEFAULTS)]
         st.session_state["model_names"] = ["Model 1"]
         st.session_state["active_model_idx"] = 0
-    
+
     # Initialize baseline assumptions separately (independent of Dario models)
     if "baseline_assumptions" not in st.session_state:
         st.session_state["baseline_assumptions"] = copy.deepcopy(BASELINE_DEFAULTS)
-    
+
     # Initialize baseline toggle
     if "baseline_enabled" not in st.session_state:
         st.session_state["baseline_enabled"] = False
@@ -1163,7 +1333,7 @@ for model_idx, model_tab in enumerate(tabs[:-1]):
             st.markdown("### Export")
             ec1, ec2 = st.columns(2)
             with ec1:
-                xlsx_bytes = build_polished_excel_report(df_funnel, fin, COLORS)
+                xlsx_bytes = build_polished_excel_report(df_funnel, fin, COLORS, state=state, model_name=model_name)
                 st.download_button(
                     "⬇️ Download Excel Report",
                     data=xlsx_bytes,
@@ -1246,7 +1416,7 @@ with tabs[-1]:
         "Compare your Dario funnel models against a simplified traditional ad-agency / paid media baseline. "
         "The baseline uses ROAS-based assumptions and is **completely independent** of the Dario funnel logic."
     )
-    
+
     # Toggle for baseline
     baseline_enabled = st.checkbox(
         "Enable Baseline Comparison",
@@ -1255,11 +1425,11 @@ with tabs[-1]:
         help="When enabled, shows a traditional paid media baseline for comparison."
     )
     st.session_state["baseline_enabled"] = baseline_enabled
-    
+
     if baseline_enabled:
         # Get baseline assumptions from session state
         bl = st.session_state["baseline_assumptions"]
-        
+
         # Baseline assumptions input section
         with st.expander("Baseline Assumptions (Edit Here)", expanded=True):
             st.markdown(
@@ -1267,11 +1437,11 @@ with tabs[-1]:
                 "It does NOT use the Dario funnel, Stage 6, funnel ratios, or funnel CAC. "
                 "Patient counts are *inferred* from revenue and per-patient value assumptions."
             )
-            
+
             st.markdown("---")
             st.markdown("**Investment Costs**")
             bl_cost_col1, bl_cost_col2 = st.columns(2)
-            
+
             with bl_cost_col1:
                 bl["media_spend"] = st.number_input(
                     "Media Spend ($)",
@@ -1297,7 +1467,7 @@ with tabs[-1]:
                     key="bl_creative_cost",
                     help="Costs for creative development and production."
                 )
-            
+
             with bl_cost_col2:
                 bl["analytics_cost"] = st.number_input(
                     "Analytics / Measurement Cost ($)",
@@ -1315,11 +1485,11 @@ with tabs[-1]:
                     key="bl_other_fixed_costs",
                     help="Any other fixed costs for the baseline campaign."
                 )
-            
+
             st.markdown("---")
             st.markdown("**Revenue Assumptions**")
             bl_rev_col1, bl_rev_col2 = st.columns(2)
-            
+
             with bl_rev_col1:
                 bl["roas"] = st.number_input(
                     "ROAS (Return on Ad Spend)",
@@ -1339,7 +1509,7 @@ with tabs[-1]:
                     key="bl_discount",
                     help="Discount applied to gross revenue (e.g., rebates, chargebacks). 0.68 = 68% discount."
                 )
-            
+
             with bl_rev_col2:
                 bl["arpp"] = st.number_input(
                     "ARPP — Avg Revenue Per Patient ($/year)",
@@ -1357,10 +1527,10 @@ with tabs[-1]:
                     key="bl_treatment_years",
                     help="Average duration of treatment in years (used to infer patient count)."
                 )
-            
+
             # Save updated assumptions back to session state
             st.session_state["baseline_assumptions"] = bl
-        
+
         # Compute baseline financials
         baseline_fin = compute_baseline_financials(
             media_spend=bl["media_spend"],
@@ -1373,14 +1543,14 @@ with tabs[-1]:
             treatment_years=bl["treatment_years"],
             gross_to_net_discount=bl["gross_to_net_discount"],
         )
-        
+
         # Baseline KPI summary
         st.markdown("#### Baseline Summary")
         st.caption(
             "These metrics are calculated using the baseline assumptions above. "
             "**Estimated Treated Patients** is inferred from net revenue divided by per-patient net value."
         )
-        
+
         bl_k1, bl_k2, bl_k3, bl_k4, bl_k5, bl_k6 = st.columns(6)
         bl_k1.metric(
             "ROAS (Input)",
@@ -1412,8 +1582,8 @@ with tabs[-1]:
             number(baseline_fin["estimated_treated_patients"]),
             help="Inferred from Net Revenue / (ARPP × Treatment Years)"
         )
-        
-                # Summary stats row
+
+        # Summary stats row
         sum_col1, sum_col2, sum_col3 = st.columns(3)
         with sum_col1:
             st.caption(f"Gross Revenue: **{money(baseline_fin['gross_revenue'])}**")
@@ -1422,10 +1592,9 @@ with tabs[-1]:
         with sum_col3:
             st.caption(f"Media Spend: **{money(baseline_fin['media_spend'])}**")
 
-        
         # Baseline detailed breakdown table
         st.markdown("#### Baseline Detailed Breakdown")
-        
+
         if pd is not None:
             baseline_detail_df = pd.DataFrame([
                 {"Metric": "Media Spend", "Value": baseline_fin["media_spend"], "Format": "currency"},
@@ -1444,8 +1613,7 @@ with tabs[-1]:
                 {"Metric": "Treatment Years", "Value": baseline_fin["treatment_years"], "Format": "number"},
                 {"Metric": "Estimated Treated Patients", "Value": baseline_fin["estimated_treated_patients"], "Format": "number"},
             ])
-            
-            # Format for display
+
             def format_baseline_value(row):
                 if row["Format"] == "currency":
                     return money(row["Value"])
@@ -1455,16 +1623,16 @@ with tabs[-1]:
                     return roix(row["Value"])
                 else:
                     return number(row["Value"])
-            
+
             baseline_detail_disp = baseline_detail_df.copy()
             baseline_detail_disp["Value"] = baseline_detail_disp.apply(format_baseline_value, axis=1)
             baseline_detail_disp = baseline_detail_disp[["Metric", "Value"]]
             st.dataframe(baseline_detail_disp, use_container_width=True, hide_index=True)
-            
+
             # Export baseline data
             baseline_export_df = baseline_detail_df[["Metric", "Value"]].copy()
             st.download_button(
-                "Download Baseline Data (Excel)",
+                "⬇️ Download Baseline Data (Excel)",
                 data=build_simple_excel(baseline_export_df, "Baseline"),
                 file_name="baseline_comparison.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -1472,7 +1640,7 @@ with tabs[-1]:
             )
         else:
             st.info("Baseline table requires pandas.")
-    
+
     # Store baseline_fin for use in comparison charts below (if enabled)
     baseline_fin_for_charts = None
     if baseline_enabled:
@@ -1488,10 +1656,12 @@ with tabs[-1]:
             treatment_years=bl["treatment_years"],
             gross_to_net_discount=bl["gross_to_net_discount"],
         )
-    
+
     st.markdown("---")
-    
-    # Original model comparison section
+
+    # ---------------------------------------------------------
+    # MODEL COMPARISON SECTION
+    # ---------------------------------------------------------
     if len(st.session_state["models"]) < 2:
         st.info("Add at least 2 models to compare them here.")
     else:
@@ -1506,375 +1676,304 @@ with tabs[-1]:
 
         if len(selected_model_names) < 2:
             st.warning("Please select at least 2 models to compare.")
-        else:
-            selected_indices = [i for i, name in enumerate(st.session_state["model_names"]) if name in selected_model_names]
-            selected_models = [st.session_state["models"][i] for i in selected_indices]
-            selected_names = [st.session_state["model_names"][i] for i in selected_indices]
+            st.stop()
 
-            comparison_rows = []
-            phase_rows = []
+        selected_indices = [i for i, name in enumerate(st.session_state["model_names"]) if name in selected_model_names]
+        selected_models = [st.session_state["models"][i] for i in selected_indices]
+        selected_names = [st.session_state["model_names"][i] for i in selected_indices]
 
-            for mstate, mname in zip(selected_models, selected_names):
-                _, fin = run_model(mstate)
-                roi = fin["roi_net"]
-                total_cost = fin["funnel_cac_total"] + fin["platform_costs_total"]
-                treated = fin["treated_patients"]
+        comparison_rows = []
+        phase_rows = []
 
-                funnel_cac_per_patient = (fin["funnel_cac_total"] / treated) if treated > 0 else 0.0
-                platform_costs_per_patient = (fin["platform_costs_total"] / treated) if treated > 0 else 0.0
-                total_cost_per_patient = (total_cost / treated) if treated > 0 else 0.0
+        for mstate, mname in zip(selected_models, selected_names):
+            _, fin = run_model(mstate)
+            roi = fin["roi_net"]
+            total_cost = fin["funnel_cac_total"] + fin["platform_costs_total"]
+            treated = fin["treated_patients"]
 
-                comparison_rows.append({
-                    "Model": mname,
-                    "Treated Patients": treated,
-                    "Gross Revenue": fin["gross_revenue"],
-                    "Net Revenue": fin["net_revenue"],
-                    "Funnel CAC": fin["funnel_cac_total"],
-                    "Platform Costs": fin["platform_costs_total"],
-                    "Total Cost": total_cost,
-                    "Net Profit": fin["net_profit"],
-                    "Discount": fin["discount"],
-                    "ARPP": float(mstate["arpp"]),
-                    "ROI (Net)": roi if roi == roi else 0.0,
-                    "Funnel CAC per Treated Patient": funnel_cac_per_patient,
-                    "Platform Costs per Treated Patient": platform_costs_per_patient,
-                    "Total Cost per Treated Patient": total_cost_per_patient,
-                })
+            funnel_cac_per_patient = (fin["funnel_cac_total"] / treated) if treated > 0 else 0.0
+            platform_costs_per_patient = (fin["platform_costs_total"] / treated) if treated > 0 else 0.0
+            total_cost_per_patient = (total_cost / treated) if treated > 0 else 0.0
 
-                if pd is not None:
-                    model_phase_df = build_phase_optimization_df(fin, mstate)
-                    if model_phase_df is not None:
-                        model_phase_df = model_phase_df.copy()
-                        model_phase_df["Model"] = mname
-                        phase_rows.append(model_phase_df)
+            comparison_rows.append({
+                "Model": mname,
+                "Treated Patients": treated,
+                "Gross Revenue": fin["gross_revenue"],
+                "Net Revenue": fin["net_revenue"],
+                "Funnel CAC": fin["funnel_cac_total"],
+                "Platform Costs": fin["platform_costs_total"],
+                "Total Cost": total_cost,
+                "Net Profit": fin["net_profit"],
+                "Discount": fin["discount"],
+                "ARPP": float(mstate["arpp"]),
+                "ROI (Net)": roi if roi == roi else 0.0,
+                "Funnel CAC per Treated Patient": funnel_cac_per_patient,
+                "Platform Costs per Treated Patient": platform_costs_per_patient,
+                "Total Cost per Treated Patient": total_cost_per_patient,
+            })
 
             if pd is not None:
-                comp_df = pd.DataFrame(comparison_rows)
-                color_map = {name: TAB_PALETTE[i % len(TAB_PALETTE)] for i, name in enumerate(selected_names)}
+                m_eff_0_3 = mstate.get("phased_eff_0_3", 0.33)
+                m_eff_3_6 = mstate.get("phased_eff_3_6", 0.66)
+                m_eff_6_plus = mstate.get("phased_eff_6_plus", 1.0)
+                model_phase_df = build_phase_optimization_df(fin, mstate, m_eff_0_3, m_eff_3_6, m_eff_6_plus)
+                if model_phase_df is not None:
+                    model_phase_df = model_phase_df.copy()
+                    model_phase_df["Model"] = mname
+                    phase_rows.append(model_phase_df)
 
-                st.markdown("### Key Metrics")
-                disp = comp_df.copy()
-                disp["Treated Patients"] = disp["Treated Patients"].map(lambda x: f"{x:,.0f}")
-                disp["Gross Revenue"] = disp["Gross Revenue"].map(lambda x: f"${x:,.0f}")
-                disp["Net Revenue"] = disp["Net Revenue"].map(lambda x: f"${x:,.0f}")
-                disp["Funnel CAC"] = disp["Funnel CAC"].map(lambda x: f"${x:,.0f}")
-                disp["Platform Costs"] = disp["Platform Costs"].map(lambda x: f"${x:,.0f}")
-                disp["Total Cost"] = disp["Total Cost"].map(lambda x: f"${x:,.0f}")
-                disp["Net Profit"] = disp["Net Profit"].map(lambda x: f"${x:,.0f}")
-                disp["Discount"] = disp["Discount"].map(lambda x: f"{x*100:.1f}%")
-                disp["ARPP"] = disp["ARPP"].map(lambda x: f"${x:,.0f}")
-                disp["ROI (Net)"] = disp["ROI (Net)"].map(lambda x: f"{x:.2f}x")
-                disp["Funnel CAC per Treated Patient"] = disp["Funnel CAC per Treated Patient"].map(lambda x: f"${x:,.0f}")
-                disp["Platform Costs per Treated Patient"] = disp["Platform Costs per Treated Patient"].map(lambda x: f"${x:,.0f}")
-                disp["Total Cost per Treated Patient"] = disp["Total Cost per Treated Patient"].map(lambda x: f"${x:,.0f}")
-                st.dataframe(disp, use_container_width=True, hide_index=True)
+        if pd is not None:
+            comp_df = pd.DataFrame(comparison_rows)
+            color_map = {name: TAB_PALETTE[i % len(TAB_PALETTE)] for i, name in enumerate(selected_names)}
 
-                st.markdown("### Charts")
-                
-                # If baseline is enabled, show combined charts with baseline
-                if baseline_enabled and baseline_fin_for_charts is not None:
-                    st.caption("Charts include the baseline (indigo) for comparison.")
-                    
-                    # Prepare baseline row for combined charts
-                    baseline_row = {
-                        "Model": "Baseline (Traditional)",
-                        "ROI (Net)": baseline_fin_for_charts["roi_net"] if baseline_fin_for_charts["roi_net"] == baseline_fin_for_charts["roi_net"] else 0.0,
-                        "Net Profit": baseline_fin_for_charts["net_profit"],
-                        "Net Revenue": baseline_fin_for_charts["net_revenue"],
-                        "Treated Patients": baseline_fin_for_charts["estimated_treated_patients"],
-                        "Total Investment": baseline_fin_for_charts["total_baseline_investment"],
-                        "Total Cost": baseline_fin_for_charts["total_baseline_investment"],
-                    }
-                    
-                    chart_col1, chart_col2 = st.columns(2)
+            st.markdown("### Key Metrics")
+            disp = comp_df.copy()
+            disp["Treated Patients"] = disp["Treated Patients"].map(lambda x: f"{x:,.0f}")
+            disp["Gross Revenue"] = disp["Gross Revenue"].map(lambda x: f"${x:,.0f}")
+            disp["Net Revenue"] = disp["Net Revenue"].map(lambda x: f"${x:,.0f}")
+            disp["Funnel CAC"] = disp["Funnel CAC"].map(lambda x: f"${x:,.0f}")
+            disp["Platform Costs"] = disp["Platform Costs"].map(lambda x: f"${x:,.0f}")
+            disp["Total Cost"] = disp["Total Cost"].map(lambda x: f"${x:,.0f}")
+            disp["Net Profit"] = disp["Net Profit"].map(lambda x: f"${x:,.0f}")
+            disp["Discount"] = disp["Discount"].map(lambda x: f"{x*100:.1f}%")
+            disp["ARPP"] = disp["ARPP"].map(lambda x: f"${x:,.0f}")
+            disp["ROI (Net)"] = disp["ROI (Net)"].map(lambda x: f"{x:.2f}x")
+            disp["Funnel CAC per Treated Patient"] = disp["Funnel CAC per Treated Patient"].map(lambda x: f"${x:,.0f}")
+            disp["Platform Costs per Treated Patient"] = disp["Platform Costs per Treated Patient"].map(lambda x: f"${x:,.0f}")
+            disp["Total Cost per Treated Patient"] = disp["Total Cost per Treated Patient"].map(lambda x: f"${x:,.0f}")
+            st.dataframe(disp, use_container_width=True, hide_index=True)
 
-                    with chart_col1:
-                        st.plotly_chart(
-                            plotly_baseline_combined_bar(
-                                comp_df,
-                                baseline_row,
-                                "ROI (Net)",
-                                "Net ROI: Models vs. Baseline",
-                                "ROI (x)",
-                                color_map,
-                            ),
-                            use_container_width=True,
-                            key="chart_roi_baseline",
-                        )
+            st.markdown("### Charts")
 
-                    with chart_col2:
-                        st.plotly_chart(
-                            plotly_baseline_combined_bar(
-                                comp_df,
-                                baseline_row,
-                                "Net Profit",
-                                "Net Profit: Models vs. Baseline",
-                                "USD",
-                                color_map,
-                            ),
-                            use_container_width=True,
-                            key="chart_profit_baseline",
-                        )
+            # If baseline is enabled, show combined charts with baseline; otherwise show original charts
+            if baseline_enabled and baseline_fin_for_charts is not None:
+                st.caption("Charts include the baseline (indigo) for comparison.")
 
-                    chart_col3, chart_col4 = st.columns(2)
+                # Prepare baseline row for combined charts
+                baseline_row = {
+                    "Model": "Baseline (Traditional)",
+                    "ROI (Net)": baseline_fin_for_charts["roi_net"] if baseline_fin_for_charts["roi_net"] == baseline_fin_for_charts["roi_net"] else 0.0,
+                    "Net Profit": baseline_fin_for_charts["net_profit"],
+                    "Net Revenue": baseline_fin_for_charts["net_revenue"],
+                    "Treated Patients": baseline_fin_for_charts["estimated_treated_patients"],
+                    "Total Investment": baseline_fin_for_charts["total_baseline_investment"],
+                    "Total Cost": baseline_fin_for_charts["total_baseline_investment"],
+                }
 
-                    with chart_col3:
-                        st.plotly_chart(
-                            plotly_baseline_combined_bar(
-                                comp_df,
-                                baseline_row,
-                                "Treated Patients",
-                                "Treated Patients: Models vs. Baseline",
-                                "Patients",
-                                color_map,
-                            ),
-                            use_container_width=True,
-                            key="chart_patients_baseline",
-                        )
-                        treated_patients_export = comp_df[["Model", "Treated Patients"]].copy()
-                        st.download_button(
-                            "Download Treated Patients Data (Excel)",
-                            data=build_simple_excel(treated_patients_export, "Treated Patients"),
-                            file_name="treated_patients_by_scenario.xlsx",
-                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                            key="dl_treated_patients_by_scenario",
-                        )
+                chart_col1, chart_col2 = st.columns(2)
 
-                    with chart_col4:
-                        st.plotly_chart(
-                            plotly_baseline_combined_bar(
-                                comp_df,
-                                baseline_row,
-                                "Total Cost",
-                                "Total Investment: Models vs. Baseline",
-                                "USD",
-                                color_map,
-                            ),
-                            use_container_width=True,
-                            key="chart_cost_baseline",
-                        )
-                
-                else:
-                    # Original charts without baseline
-                    chart_col1, chart_col2 = st.columns(2)
-
-                    with chart_col1:
-                        st.plotly_chart(
-                            plotly_comparison_bar(
-                                comp_df,
-                                "ROI (Net)",
-                                "Net ROI by Scenario",
-                                "ROI (x)",
-                                color_map,
-                            ),
-                            use_container_width=True,
-                        )
-
-                    with chart_col2:
-                        st.plotly_chart(
-                            plotly_comparison_bar(
-                                comp_df,
-                                "Net Profit",
-                                "Net Profit by Scenario",
-                                "USD",
-                                color_map,
-                            ),
-                            use_container_width=True,
-                        )
-
-                    chart_col3, chart_col4 = st.columns(2)
-
-                    with chart_col3:
-                        st.plotly_chart(
-                            plotly_comparison_bar(
-                                comp_df,
-                                "Treated Patients",
-                                "Treated Patients by Scenario",
-                                "Patients",
-                                color_map,
-                            ),
-                            use_container_width=True,
-                        )
-                        treated_patients_export = comp_df[["Model", "Treated Patients"]].copy()
-                        st.download_button(
-                            "Download Treated Patients Data (Excel)",
-                            data=build_simple_excel(treated_patients_export, "Treated Patients"),
-                            file_name="treated_patients_by_scenario.xlsx",
-                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                            key="dl_treated_patients_by_scenario",
-                        )
-
-                    with chart_col4:
-                        st.plotly_chart(
-                            plotly_comparison_bar(
-                                comp_df,
-                                "Total Cost",
-                                "Total Investment by Scenario",
-                                "USD",
-                                color_map,
-                            ),
-                            use_container_width=True,
-                        )
-
-                st.markdown("### Per-Patient Cost Comparison")
-                st.caption("Compares acquisition and platform investment on a per-treated-patient basis across selected scenarios.")
-
-                per_patient_cost_df = pd.DataFrame([
-                    {
-                        "Model": row["Model"],
-                        "Metric": "Funnel CAC per Treated Patient",
-                        "Cost per Treated Patient": row["Funnel CAC per Treated Patient"],
-                    }
-                    for _, row in comp_df.iterrows()
-                ] + [
-                    {
-                        "Model": row["Model"],
-                        "Metric": "Platform Costs per Treated Patient",
-                        "Cost per Treated Patient": row["Platform Costs per Treated Patient"],
-                    }
-                    for _, row in comp_df.iterrows()
-                ] + [
-                    {
-                        "Model": row["Model"],
-                        "Metric": "Total Cost per Treated Patient",
-                        "Cost per Treated Patient": row["Total Cost per Treated Patient"],
-                    }
-                    for _, row in comp_df.iterrows()
-                ])
-
-                st.plotly_chart(plotly_per_patient_costs(per_patient_cost_df, color_map), use_container_width=True)
-
-                per_patient_export_df = comp_df[[
-                    "Model",
-                    "Treated Patients",
-                    "Funnel CAC per Treated Patient",
-                    "Platform Costs per Treated Patient",
-                    "Total Cost per Treated Patient",
-                ]].copy()
-
-                st.download_button(
-                    "Download Per-Patient Cost Data (Excel)",
-                    data=build_simple_excel(per_patient_export_df, "Per Patient Costs"),
-                    file_name="per_patient_cost_comparison.xlsx",
-                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                    key="dl_per_patient_cost_comparison",
-                )
-
-                if phase_rows:
-                    st.markdown("### Optimization Comparison by Phase")
-                    phase_comp_df = pd.concat(phase_rows, ignore_index=True)
-
-                    op1, op2 = st.columns(2)
-                    with op1:
-                        st.plotly_chart(
-                            plotly_phase_comparison_chart(
-                                phase_comp_df,
-                                y_col="ROI",
-                                title="Optimization ROI by Phase Across Scenarios",
-                                y_title="ROI (x)",
-                                color_map=color_map,
-                            ),
-                            use_container_width=True,
-                        )
-
-                    with op2:
-                        st.plotly_chart(
-                            plotly_phase_comparison_chart(
-                                phase_comp_df,
-                                y_col="Net Revenue",
-                                title="Optimization Net Revenue by Phase Across Scenarios",
-                                y_title="Net Revenue",
-                                color_map=color_map,
-                            ),
-                            use_container_width=True,
-                        )
-
-                    optimization_export_df = phase_comp_df[[
-                        "Model",
-                        "Phase",
-                        "Efficiency",
-                        "ROI",
-                        "Net Revenue",
-                    ]].copy()
-
-                    st.download_button(
-                        "Download Optimization Phase Data (Excel)",
-                        data=build_simple_excel(optimization_export_df, "Optimization Phases"),
-                        file_name="optimization_phase_comparison.xlsx",
-                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                        key="dl_optimization_phase_comparison",
+                with chart_col1:
+                    st.plotly_chart(
+                        plotly_baseline_combined_bar(
+                            comp_df,
+                            baseline_row,
+                            "ROI (Net)",
+                            "Net ROI: Models vs. Baseline",
+                            "ROI (x)",
+                            color_map,
+                        ),
+                        use_container_width=True,
+                        key="chart_roi_baseline",
                     )
 
-                st.markdown("### Model Diff View")
-                if len(selected_names) >= 2:
-                    diff_col1, diff_col2 = st.columns(2)
-                    with diff_col1:
-                        diff_model_a = st.selectbox("Model A:", options=selected_names, index=0, key="diff_model_a")
-                    with diff_col2:
-                        remaining = [n for n in selected_names if n != diff_model_a]
-                        diff_model_b = st.selectbox("Model B:", options=remaining, index=0, key="diff_model_b")
+                with chart_col2:
+                    st.plotly_chart(
+                        plotly_baseline_combined_bar(
+                            comp_df,
+                            baseline_row,
+                            "Net Profit",
+                            "Net Profit: Models vs. Baseline",
+                            "USD",
+                            color_map,
+                        ),
+                        use_container_width=True,
+                        key="chart_profit_baseline",
+                    )
 
-                    idx_a = st.session_state["model_names"].index(diff_model_a)
-                    idx_b = st.session_state["model_names"].index(diff_model_b)
-                    state_a = st.session_state["models"][idx_a]
-                    state_b = st.session_state["models"][idx_b]
+                chart_col3, chart_col4 = st.columns(2)
 
-                    diff_rows = []
+                with chart_col3:
+                    st.plotly_chart(
+                        plotly_baseline_combined_bar(
+                            comp_df,
+                            baseline_row,
+                            "Treated Patients",
+                            "Treated Patients: Models vs. Baseline",
+                            "Patients",
+                            color_map,
+                        ),
+                        use_container_width=True,
+                        key="chart_patients_baseline",
+                    )
 
-                    top_params = [
-                        ("Base Population", "base_population", "{:,.0f}"),
-                        ("ARPP", "arpp", "${:,.0f}"),
-                        ("Treatment Years", "treatment_years", "{:.1f}"),
-                        ("Discount", "discount", "{:.1%}"),
-                    ]
-                    for label, key, fmt in top_params:
-                        val_a = state_a.get(key, 0)
-                        val_b = state_b.get(key, 0)
-                        if val_a != val_b:
-                            diff_rows.append({
-                                "Parameter": label,
-                                f"{diff_model_a}": fmt.format(val_a),
-                                f"{diff_model_b}": fmt.format(val_b),
-                                "Difference": fmt.format(val_b - val_a) if "%" not in fmt else f"{(val_b - val_a) * 100:+.1f}pp",
-                            })
+                with chart_col4:
+                    st.plotly_chart(
+                        plotly_baseline_combined_bar(
+                            comp_df,
+                            baseline_row,
+                            "Total Cost",
+                            "Total Investment: Models vs. Baseline",
+                            "USD",
+                            color_map,
+                        ),
+                        use_container_width=True,
+                        key="chart_cost_baseline",
+                    )
 
-                    for sidx in range(len(STAGE_NAMES)):
-                        ratio_a = state_a["ratios"][sidx]
-                        ratio_b = state_b["ratios"][sidx]
-                        if ratio_a != ratio_b and sidx > 0:
-                            diff_rows.append({
-                                "Parameter": f"Stage {sidx+1} Ratio",
-                                f"{diff_model_a}": f"{ratio_a:.1%}",
-                                f"{diff_model_b}": f"{ratio_b:.1%}",
-                                "Difference": f"{(ratio_b - ratio_a) * 100:+.1f}pp",
-                            })
+            else:
+                # Original charts without baseline
+                chart_col1, chart_col2 = st.columns(2)
 
-                        cac_a = state_a["cac"][sidx]
-                        cac_b = state_b["cac"][sidx]
-                        if cac_a != cac_b:
-                            diff_rows.append({
-                                "Parameter": f"Stage {sidx+1} CAC",
-                                f"{diff_model_a}": f"${cac_a:,.0f}",
-                                f"{diff_model_b}": f"${cac_b:,.0f}",
-                                "Difference": f"${cac_b - cac_a:+,.0f}",
-                            })
+                with chart_col1:
+                    st.plotly_chart(
+                        plotly_comparison_bar(comp_df, "ROI (Net)", "Net ROI by Scenario", "ROI (x)", color_map),
+                        use_container_width=True,
+                    )
 
-                    if diff_rows:
-                        diff_df = pd.DataFrame(diff_rows)
-                        st.dataframe(diff_df, use_container_width=True, hide_index=True)
-                    else:
-                        st.success("These two models have identical parameters!")
+                with chart_col2:
+                    st.plotly_chart(
+                        plotly_comparison_bar(comp_df, "Net Profit", "Net Profit by Scenario", "USD", color_map),
+                        use_container_width=True,
+                    )
+
+                chart_col3, chart_col4 = st.columns(2)
+
+                with chart_col3:
+                    st.plotly_chart(
+                        plotly_comparison_bar(comp_df, "Treated Patients", "Treated Patients by Scenario", "Patients", color_map),
+                        use_container_width=True,
+                    )
+
+                with chart_col4:
+                    st.plotly_chart(
+                        plotly_comparison_bar(comp_df, "Total Cost", "Total Investment by Scenario", "USD", color_map),
+                        use_container_width=True,
+                    )
+
+            st.markdown("### Per-Patient Cost Comparison")
+            st.caption("Compares acquisition and platform investment on a per-treated-patient basis across selected scenarios.")
+
+            per_patient_cost_df = pd.DataFrame(
+                [{"Model": row["Model"], "Metric": "Funnel CAC per Treated Patient", "Cost per Treated Patient": row["Funnel CAC per Treated Patient"]} for _, row in comp_df.iterrows()] +
+                [{"Model": row["Model"], "Metric": "Platform Costs per Treated Patient", "Cost per Treated Patient": row["Platform Costs per Treated Patient"]} for _, row in comp_df.iterrows()] +
+                [{"Model": row["Model"], "Metric": "Total Cost per Treated Patient", "Cost per Treated Patient": row["Total Cost per Treated Patient"]} for _, row in comp_df.iterrows()]
+            )
+
+            st.plotly_chart(plotly_per_patient_costs(per_patient_cost_df, color_map), use_container_width=True)
+
+            if phase_rows:
+                st.markdown("### Optimization Comparison by Phase")
+                phase_comp_df = pd.concat(phase_rows, ignore_index=True)
+
+                op1, op2 = st.columns(2)
+                with op1:
+                    st.plotly_chart(
+                        plotly_phase_comparison_chart(phase_comp_df, y_col="ROI", title="Optimization ROI by Phase Across Scenarios", y_title="ROI (x)", color_map=color_map),
+                        use_container_width=True,
+                    )
+                with op2:
+                    st.plotly_chart(
+                        plotly_phase_comparison_chart(phase_comp_df, y_col="Net Revenue", title="Optimization Net Revenue by Phase Across Scenarios", y_title="Net Revenue", color_map=color_map),
+                        use_container_width=True,
+                    )
+            else:
+                phase_comp_df = None
+
+            st.markdown("### Model Diff View")
+            diff_rows = []
+            if len(selected_names) >= 2:
+                diff_col1, diff_col2 = st.columns(2)
+                with diff_col1:
+                    diff_model_a = st.selectbox("Model A:", options=selected_names, index=0, key="diff_model_a")
+                with diff_col2:
+                    remaining = [n for n in selected_names if n != diff_model_a]
+                    diff_model_b = st.selectbox("Model B:", options=remaining, index=0, key="diff_model_b")
+
+                idx_a = st.session_state["model_names"].index(diff_model_a)
+                idx_b = st.session_state["model_names"].index(diff_model_b)
+                state_a = st.session_state["models"][idx_a]
+                state_b = st.session_state["models"][idx_b]
+
+                top_params = [
+                    ("Base Population", "base_population", "{:,.0f}"),
+                    ("ARPP", "arpp", "${:,.0f}"),
+                    ("Treatment Years", "treatment_years", "{:.1f}"),
+                    ("Discount", "discount", "{:.1%}"),
+                ]
+                for label, key, fmt in top_params:
+                    val_a = state_a.get(key, 0)
+                    val_b = state_b.get(key, 0)
+                    if val_a != val_b:
+                        diff_rows.append({
+                            "Parameter": label,
+                            f"{diff_model_a}": fmt.format(val_a),
+                            f"{diff_model_b}": fmt.format(val_b),
+                            "Difference": fmt.format(val_b - val_a) if "%" not in fmt else f"{(val_b - val_a) * 100:+.1f}pp",
+                        })
+
+                for sidx in range(len(STAGE_NAMES)):
+                    ratio_a = state_a["ratios"][sidx]
+                    ratio_b = state_b["ratios"][sidx]
+                    if ratio_a != ratio_b and sidx > 0:
+                        diff_rows.append({
+                            "Parameter": f"Stage {sidx+1} Ratio",
+                            f"{diff_model_a}": f"{ratio_a:.1%}",
+                            f"{diff_model_b}": f"{ratio_b:.1%}",
+                            "Difference": f"{(ratio_b - ratio_a) * 100:+.1f}pp",
+                        })
+
+                    cac_a = state_a["cac"][sidx]
+                    cac_b = state_b["cac"][sidx]
+                    if cac_a != cac_b:
+                        diff_rows.append({
+                            "Parameter": f"Stage {sidx+1} CAC",
+                            f"{diff_model_a}": f"${cac_a:,.0f}",
+                            f"{diff_model_b}": f"${cac_b:,.0f}",
+                            "Difference": f"${cac_b - cac_a:+,.0f}",
+                        })
+
+                if diff_rows:
+                    diff_df = pd.DataFrame(diff_rows)
+                    st.dataframe(diff_df, use_container_width=True, hide_index=True)
                 else:
-                    st.info("Select at least 2 models above to see a diff view.")
+                    diff_df = None
+                    st.success("These two models have identical parameters!")
+            else:
+                diff_df = None
+                st.info("Select at least 2 models above to see a diff view.")
 
-                st.markdown("### Export Comparison")
-                comp_csv = comp_df.to_csv(index=False).encode("utf-8")
-                st.download_button(
-                    "⬇️ Download Comparison CSV",
-                    data=comp_csv,
-                    file_name="pharmaroi_comparison.csv",
-                    mime="text/csv",
-                )
+            st.markdown("### Export Comparison")
+
+            per_patient_export_df = comp_df[[
+                "Model",
+                "Treated Patients",
+                "Funnel CAC per Treated Patient",
+                "Platform Costs per Treated Patient",
+                "Total Cost per Treated Patient",
+            ]].copy()
+
+            comparison_excel_bytes = build_comparison_excel(
+                comp_df=comp_df,
+                per_patient_df=per_patient_export_df,
+                phase_comp_df=phase_comp_df,
+                diff_df=diff_df,
+                model_names=selected_names,
+            )
+            st.download_button(
+                "⬇️ Download Full Comparison Report (Excel)",
+                data=comparison_excel_bytes,
+                file_name="pharmaroi_comparison_report.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                key="dl_full_comparison",
+            )
+
+            comp_csv = comp_df.to_csv(index=False).encode("utf-8")
+            st.download_button(
+                "⬇️ Download Comparison CSV",
+                data=comp_csv,
+                file_name="pharmaroi_comparison.csv",
+                mime="text/csv",
+            )
 
 st.divider()
 st.subheader("How to interpret")
