@@ -35,6 +35,7 @@ COLORS = {
     "warning": "#F59E0B",
     "danger": "#EF4444",
     "muted": "#6B7280",
+    "baseline": "#6366F1",  # Indigo color for baseline
 }
 
 TAB_PALETTE = [
@@ -98,6 +99,23 @@ ZERO_SAMPLE = {
 }
 
 # -----------------------------
+# Baseline defaults (independent of Dario funnel)
+# -----------------------------
+# These are the default assumptions for the traditional ad-agency / paid media baseline.
+# All values are independent and do not reference the Dario funnel model.
+BASELINE_DEFAULTS = {
+    "media_spend": 1_000_000.0,        # Core paid media spend
+    "agency_fee": 150_000.0,           # Agency management fee
+    "creative_cost": 100_000.0,        # Creative / production cost
+    "analytics_cost": 50_000.0,        # Analytics / measurement cost
+    "other_fixed_costs": 0.0,          # Other fixed baseline costs
+    "roas": 1.35,                       # Return on Ad Spend (gross revenue / media spend)
+    "arpp": 47_400.0,                  # Average Revenue Per Patient (annual)
+    "treatment_years": 1.0,            # Average treatment duration in years
+    "gross_to_net_discount": 0.68,     # Gross-to-net discount rate
+}
+
+# -----------------------------
 # Formatting helpers
 # -----------------------------
 def clamp(x, lo, hi):
@@ -114,6 +132,107 @@ def pct(x):
 
 def roix(x):
     return f"{x:,.2f}x"
+
+# -----------------------------
+# Baseline computation (independent of Dario funnel)
+# -----------------------------
+def compute_baseline_financials(
+    media_spend: float,
+    agency_fee: float,
+    creative_cost: float,
+    analytics_cost: float,
+    other_fixed_costs: float,
+    roas: float,
+    arpp: float,
+    treatment_years: float,
+    gross_to_net_discount: float,
+) -> dict:
+    """
+    Compute baseline financials for a traditional ad-agency / paid media approach.
+
+    This is ENTIRELY INDEPENDENT of the Dario funnel model.
+    It does NOT use Stage 6, funnel ratios, funnel CAC, or any Dario-specific logic.
+
+    Formulas:
+    ---------
+    total_baseline_investment = media_spend + agency_fee + creative_cost + analytics_cost + other_fixed_costs
+        -> The total amount invested in the baseline paid media campaign.
+
+    gross_revenue = media_spend * roas
+        -> ROAS is defined as gross revenue generated per dollar of media spend.
+        -> This is industry-standard: ROAS = Gross Revenue / Media Spend.
+
+    net_revenue = gross_revenue * (1 - gross_to_net_discount)
+        -> Net revenue after applying the gross-to-net discount (e.g., rebates, chargebacks).
+
+    net_profit = net_revenue - total_baseline_investment
+        -> Profit after subtracting all baseline costs from net revenue.
+
+    baseline_roi_net = net_profit / total_baseline_investment
+        -> ROI (Net) is defined as net profit divided by total investment.
+        -> This is distinct from ROAS: ROI measures profit return, ROAS measures revenue return.
+
+    estimated_treated_patients = net_revenue / (arpp * treatment_years)
+        -> Inferred patient count based on net revenue and per-patient value.
+        -> Note: This uses net_revenue (already discounted), divided by the
+           per-patient net value (arpp * treatment_years).
+        -> We do NOT apply the discount again to ARPP since net_revenue is already net.
+
+    Returns a dict with all computed baseline metrics.
+    """
+    # Ensure non-negative inputs
+    media_spend = max(0.0, float(media_spend))
+    agency_fee = max(0.0, float(agency_fee))
+    creative_cost = max(0.0, float(creative_cost))
+    analytics_cost = max(0.0, float(analytics_cost))
+    other_fixed_costs = max(0.0, float(other_fixed_costs))
+    roas = max(0.0, float(roas))
+    arpp = max(0.0, float(arpp))
+    treatment_years = max(0.0, float(treatment_years))
+    gross_to_net_discount = clamp(gross_to_net_discount, 0.0, 1.0)
+
+    # Total investment (all baseline costs)
+    total_baseline_investment = media_spend + agency_fee + creative_cost + analytics_cost + other_fixed_costs
+
+    # Gross revenue from ROAS (ROAS applies to media spend only, per industry convention)
+    gross_revenue = media_spend * roas
+
+    # Net revenue after gross-to-net discount
+    net_revenue = gross_revenue * (1.0 - gross_to_net_discount)
+
+    # Net profit
+    net_profit = net_revenue - total_baseline_investment
+
+    # ROI (Net) = Net Profit / Total Investment
+    if total_baseline_investment > 0:
+        baseline_roi_net = net_profit / total_baseline_investment
+    else:
+        baseline_roi_net = float("nan")
+
+    # Estimated treated patients (inferred from net revenue)
+    per_patient_net_value = arpp * treatment_years
+    if per_patient_net_value > 0:
+        estimated_treated_patients = net_revenue / per_patient_net_value
+    else:
+        estimated_treated_patients = 0.0
+
+    return {
+        "media_spend": media_spend,
+        "agency_fee": agency_fee,
+        "creative_cost": creative_cost,
+        "analytics_cost": analytics_cost,
+        "other_fixed_costs": other_fixed_costs,
+        "total_baseline_investment": total_baseline_investment,
+        "roas_input": roas,
+        "gross_revenue": gross_revenue,
+        "gross_to_net_discount": gross_to_net_discount,
+        "net_revenue": net_revenue,
+        "net_profit": net_profit,
+        "roi_net": baseline_roi_net,
+        "arpp": arpp,
+        "treatment_years": treatment_years,
+        "estimated_treated_patients": estimated_treated_patients,
+    }
 
 # -----------------------------
 # Core computations
@@ -379,6 +498,43 @@ def plotly_comparison_bar(comp_df, y_col, title, y_title, color_map):
     )
     return fig
 
+
+def plotly_baseline_combined_bar(comp_df, baseline_row, y_col, title, y_title, color_map):
+    """
+    Create a grouped bar chart with models AND baseline as separate bars.
+    """
+    if pd is None:
+        return None
+
+    # Add baseline as a row
+    combined_df = comp_df[["Model", y_col]].copy()
+    baseline_df = pd.DataFrame([{"Model": "Baseline (Traditional)", y_col: baseline_row[y_col]}])
+    combined_df = pd.concat([combined_df, baseline_df], ignore_index=True)
+
+    # Extend color map for baseline
+    extended_color_map = color_map.copy()
+    extended_color_map["Baseline (Traditional)"] = COLORS["baseline"]
+
+    fig = px.bar(combined_df, x="Model", y=y_col, color="Model", color_discrete_map=extended_color_map, text=y_col)
+
+    if "ROI" in y_col or "ROAS" in y_col:
+        fig.update_traces(texttemplate="%{text:.2f}x", textposition="outside")
+    elif "Patients" in y_col:
+        fig.update_traces(texttemplate="%{text:,.0f}", textposition="outside")
+    else:
+        fig.update_traces(texttemplate="$%{text:,.0f}", textposition="outside")
+
+    fig.update_layout(
+        title=title,
+        height=380,
+        margin=dict(l=10, r=10, t=55, b=10),
+        xaxis_title=None,
+        yaxis_title=y_title,
+        showlegend=False,
+    )
+    return fig
+
+
 def plotly_phase_step_chart(df_phase, y_col, title, y_title, line_color):
     fig = go.Figure()
 
@@ -419,6 +575,7 @@ def plotly_phase_step_chart(df_phase, y_col, title, y_title, line_color):
         hovermode="x unified",
     )
     return fig
+
 
 def plotly_phase_comparison_chart(df_phase_comp, y_col, title, y_title, color_map):
     fig = go.Figure()
@@ -464,6 +621,7 @@ def plotly_phase_comparison_chart(df_phase_comp, y_col, title, y_title, color_ma
         hovermode="x unified",
     )
     return fig
+
 
 def plotly_per_patient_costs(df_pp_costs, color_map):
     fig = px.bar(
@@ -675,17 +833,8 @@ def build_simple_excel(df, sheet_name="Data"):
     buffer.seek(0)
     return buffer.getvalue()
 
-# -----------------------------
-# Session state bootstrap
-# -----------------------------
-def init_session():
-    if "models" not in st.session_state:
-        st.session_state["models"] = [copy.deepcopy(SPONSOR_DEFAULTS)]
-        st.session_state["model_names"] = ["Model 1"]
-        st.session_state["active_model_idx"] = 0
 
 def build_comparison_excel(comp_df, per_patient_df, phase_comp_df, diff_df, model_names):
-    import datetime
     wb = Workbook()
     header_fill = PatternFill("solid", fgColor="0F172A")
     header_font = Font(bold=True, color="FFFFFF")
@@ -794,6 +943,23 @@ def build_comparison_excel(comp_df, per_patient_df, phase_comp_df, diff_df, mode
     wb.save(buffer)
     buffer.seek(0)
     return buffer.getvalue()
+
+# -----------------------------
+# Session state bootstrap
+# -----------------------------
+def init_session():
+    if "models" not in st.session_state:
+        st.session_state["models"] = [copy.deepcopy(SPONSOR_DEFAULTS)]
+        st.session_state["model_names"] = ["Model 1"]
+        st.session_state["active_model_idx"] = 0
+
+    # Initialize baseline assumptions separately (independent of Dario models)
+    if "baseline_assumptions" not in st.session_state:
+        st.session_state["baseline_assumptions"] = copy.deepcopy(BASELINE_DEFAULTS)
+
+    # Initialize baseline toggle
+    if "baseline_enabled" not in st.session_state:
+        st.session_state["baseline_enabled"] = False
 
 init_session()
 
@@ -1240,6 +1406,262 @@ for model_idx, model_tab in enumerate(tabs[:-1]):
 with tabs[-1]:
     st.subheader("Model Comparison")
 
+    # ---------------------------------------------------------
+    # BASELINE COMPARISON SECTION (Independent of Dario Funnel)
+    # Placed at the top so it's always visible regardless of model count
+    # ---------------------------------------------------------
+    st.markdown("---")
+    st.markdown("### Baseline Comparison")
+    st.caption(
+        "Compare your Dario funnel models against a simplified traditional ad-agency / paid media baseline. "
+        "The baseline uses ROAS-based assumptions and is **completely independent** of the Dario funnel logic."
+    )
+
+    # Toggle for baseline
+    baseline_enabled = st.checkbox(
+        "Enable Baseline Comparison",
+        value=st.session_state.get("baseline_enabled", False),
+        key="baseline_toggle",
+        help="When enabled, shows a traditional paid media baseline for comparison."
+    )
+    st.session_state["baseline_enabled"] = baseline_enabled
+
+    if baseline_enabled:
+        # Get baseline assumptions from session state
+        bl = st.session_state["baseline_assumptions"]
+
+        # Baseline assumptions input section
+        with st.expander("Baseline Assumptions (Edit Here)", expanded=True):
+            st.markdown(
+                "**About the Baseline:** This represents a traditional ad-agency / paid media approach. "
+                "It does NOT use the Dario funnel, Stage 6, funnel ratios, or funnel CAC. "
+                "Patient counts are *inferred* from revenue and per-patient value assumptions."
+            )
+
+            st.markdown("---")
+            st.markdown("**Investment Costs**")
+            bl_cost_col1, bl_cost_col2 = st.columns(2)
+
+            with bl_cost_col1:
+                bl["media_spend"] = st.number_input(
+                    "Media Spend ($)",
+                    min_value=0.0,
+                    step=50_000.0,
+                    value=float(bl.get("media_spend", BASELINE_DEFAULTS["media_spend"])),
+                    key="bl_media_spend",
+                    help="Core paid media spend (the denominator for ROAS calculation)."
+                )
+                bl["agency_fee"] = st.number_input(
+                    "Agency Fee ($)",
+                    min_value=0.0,
+                    step=10_000.0,
+                    value=float(bl.get("agency_fee", BASELINE_DEFAULTS["agency_fee"])),
+                    key="bl_agency_fee",
+                    help="Agency management and service fees."
+                )
+                bl["creative_cost"] = st.number_input(
+                    "Creative / Production Cost ($)",
+                    min_value=0.0,
+                    step=10_000.0,
+                    value=float(bl.get("creative_cost", BASELINE_DEFAULTS["creative_cost"])),
+                    key="bl_creative_cost",
+                    help="Costs for creative development and production."
+                )
+
+            with bl_cost_col2:
+                bl["analytics_cost"] = st.number_input(
+                    "Analytics / Measurement Cost ($)",
+                    min_value=0.0,
+                    step=10_000.0,
+                    value=float(bl.get("analytics_cost", BASELINE_DEFAULTS["analytics_cost"])),
+                    key="bl_analytics_cost",
+                    help="Costs for analytics, attribution, and measurement."
+                )
+                bl["other_fixed_costs"] = st.number_input(
+                    "Other Fixed Costs ($)",
+                    min_value=0.0,
+                    step=10_000.0,
+                    value=float(bl.get("other_fixed_costs", BASELINE_DEFAULTS["other_fixed_costs"])),
+                    key="bl_other_fixed_costs",
+                    help="Any other fixed costs for the baseline campaign."
+                )
+
+            st.markdown("---")
+            st.markdown("**Revenue Assumptions**")
+            bl_rev_col1, bl_rev_col2 = st.columns(2)
+
+            with bl_rev_col1:
+                bl["roas"] = st.number_input(
+                    "ROAS (Return on Ad Spend)",
+                    min_value=0.0,
+                    step=0.1,
+                    value=float(bl.get("roas", BASELINE_DEFAULTS["roas"])),
+                    format="%.2f",
+                    key="bl_roas",
+                    help="Gross revenue generated per dollar of media spend. E.g., 3.0 means $3 gross revenue per $1 media spend."
+                )
+                bl["gross_to_net_discount"] = st.slider(
+                    "Gross-to-Net Discount",
+                    min_value=0.0,
+                    max_value=1.0,
+                    step=0.01,
+                    value=float(bl.get("gross_to_net_discount", BASELINE_DEFAULTS["gross_to_net_discount"])),
+                    key="bl_discount",
+                    help="Discount applied to gross revenue (e.g., rebates, chargebacks). 0.68 = 68% discount."
+                )
+
+            with bl_rev_col2:
+                bl["arpp"] = st.number_input(
+                    "ARPP — Avg Revenue Per Patient ($/year)",
+                    min_value=0.0,
+                    step=1_000.0,
+                    value=float(bl.get("arpp", BASELINE_DEFAULTS["arpp"])),
+                    key="bl_arpp",
+                    help="Average annual revenue per treated patient (used to infer patient count from revenue)."
+                )
+                bl["treatment_years"] = st.number_input(
+                    "Treatment Years",
+                    min_value=0.1,
+                    step=0.5,
+                    value=float(bl.get("treatment_years", BASELINE_DEFAULTS["treatment_years"])),
+                    key="bl_treatment_years",
+                    help="Average duration of treatment in years (used to infer patient count)."
+                )
+
+            # Save updated assumptions back to session state
+            st.session_state["baseline_assumptions"] = bl
+
+        # Compute baseline financials
+        baseline_fin = compute_baseline_financials(
+            media_spend=bl["media_spend"],
+            agency_fee=bl["agency_fee"],
+            creative_cost=bl["creative_cost"],
+            analytics_cost=bl["analytics_cost"],
+            other_fixed_costs=bl["other_fixed_costs"],
+            roas=bl["roas"],
+            arpp=bl["arpp"],
+            treatment_years=bl["treatment_years"],
+            gross_to_net_discount=bl["gross_to_net_discount"],
+        )
+
+        # Baseline KPI summary
+        st.markdown("#### Baseline Summary")
+        st.caption(
+            "These metrics are calculated using the baseline assumptions above. "
+            "**Estimated Treated Patients** is inferred from net revenue divided by per-patient net value."
+        )
+
+        bl_k1, bl_k2, bl_k3, bl_k4, bl_k5, bl_k6 = st.columns(6)
+        bl_k1.metric(
+            "ROAS (Input)",
+            roix(baseline_fin["roas_input"]),
+            help="Return on Ad Spend = Gross Revenue / Media Spend"
+        )
+        bl_k2.metric(
+            "ROI (Net)",
+            roix(baseline_fin["roi_net"]) if baseline_fin["roi_net"] == baseline_fin["roi_net"] else "—",
+            help="ROI (Net) = Net Profit / Total Investment"
+        )
+        bl_k3.metric(
+            "Total Investment",
+            money(baseline_fin["total_baseline_investment"]),
+            help="Media Spend + Agency Fee + Creative + Analytics + Other"
+        )
+        bl_k4.metric(
+            "Net Revenue",
+            money(baseline_fin["net_revenue"]),
+            help="Gross Revenue × (1 - Discount)"
+        )
+        bl_k5.metric(
+            "Net Profit",
+            money(baseline_fin["net_profit"]),
+            help="Net Revenue - Total Investment"
+        )
+        bl_k6.metric(
+            "Est. Treated Patients",
+            number(baseline_fin["estimated_treated_patients"]),
+            help="Inferred from Net Revenue / (ARPP × Treatment Years)"
+        )
+
+        # Summary stats row
+        sum_col1, sum_col2, sum_col3 = st.columns(3)
+        with sum_col1:
+            st.caption(f"Gross Revenue: **{money(baseline_fin['gross_revenue'])}**")
+        with sum_col2:
+            st.caption(f"Discount: **{pct(baseline_fin['gross_to_net_discount'])}**")
+        with sum_col3:
+            st.caption(f"Media Spend: **{money(baseline_fin['media_spend'])}**")
+
+        # Baseline detailed breakdown table
+        st.markdown("#### Baseline Detailed Breakdown")
+
+        if pd is not None:
+            baseline_detail_df = pd.DataFrame([
+                {"Metric": "Media Spend", "Value": baseline_fin["media_spend"], "Format": "currency"},
+                {"Metric": "Agency Fee", "Value": baseline_fin["agency_fee"], "Format": "currency"},
+                {"Metric": "Creative / Production", "Value": baseline_fin["creative_cost"], "Format": "currency"},
+                {"Metric": "Analytics / Measurement", "Value": baseline_fin["analytics_cost"], "Format": "currency"},
+                {"Metric": "Other Fixed Costs", "Value": baseline_fin["other_fixed_costs"], "Format": "currency"},
+                {"Metric": "Total Investment", "Value": baseline_fin["total_baseline_investment"], "Format": "currency"},
+                {"Metric": "ROAS (Input)", "Value": baseline_fin["roas_input"], "Format": "ratio"},
+                {"Metric": "Gross Revenue", "Value": baseline_fin["gross_revenue"], "Format": "currency"},
+                {"Metric": "Gross-to-Net Discount", "Value": baseline_fin["gross_to_net_discount"], "Format": "percent"},
+                {"Metric": "Net Revenue", "Value": baseline_fin["net_revenue"], "Format": "currency"},
+                {"Metric": "Net Profit", "Value": baseline_fin["net_profit"], "Format": "currency"},
+                {"Metric": "ROI (Net)", "Value": baseline_fin["roi_net"] if baseline_fin["roi_net"] == baseline_fin["roi_net"] else 0.0, "Format": "ratio"},
+                {"Metric": "ARPP (per year)", "Value": baseline_fin["arpp"], "Format": "currency"},
+                {"Metric": "Treatment Years", "Value": baseline_fin["treatment_years"], "Format": "number"},
+                {"Metric": "Estimated Treated Patients", "Value": baseline_fin["estimated_treated_patients"], "Format": "number"},
+            ])
+
+            def format_baseline_value(row):
+                if row["Format"] == "currency":
+                    return money(row["Value"])
+                elif row["Format"] == "percent":
+                    return pct(row["Value"])
+                elif row["Format"] == "ratio":
+                    return roix(row["Value"])
+                else:
+                    return number(row["Value"])
+
+            baseline_detail_disp = baseline_detail_df.copy()
+            baseline_detail_disp["Value"] = baseline_detail_disp.apply(format_baseline_value, axis=1)
+            baseline_detail_disp = baseline_detail_disp[["Metric", "Value"]]
+            st.dataframe(baseline_detail_disp, use_container_width=True, hide_index=True)
+
+            # Export baseline data
+            baseline_export_df = baseline_detail_df[["Metric", "Value"]].copy()
+            st.download_button(
+                "⬇️ Download Baseline Data (Excel)",
+                data=build_simple_excel(baseline_export_df, "Baseline"),
+                file_name="baseline_comparison.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                key="dl_baseline_comparison",
+            )
+        else:
+            st.info("Baseline table requires pandas.")
+
+    # Store baseline_fin for use in comparison charts below (if enabled)
+    baseline_fin_for_charts = None
+    if baseline_enabled:
+        bl = st.session_state["baseline_assumptions"]
+        baseline_fin_for_charts = compute_baseline_financials(
+            media_spend=bl["media_spend"],
+            agency_fee=bl["agency_fee"],
+            creative_cost=bl["creative_cost"],
+            analytics_cost=bl["analytics_cost"],
+            other_fixed_costs=bl["other_fixed_costs"],
+            roas=bl["roas"],
+            arpp=bl["arpp"],
+            treatment_years=bl["treatment_years"],
+            gross_to_net_discount=bl["gross_to_net_discount"],
+        )
+
+    st.markdown("---")
+
+    # ---------------------------------------------------------
+    # MODEL COMPARISON SECTION
+    # ---------------------------------------------------------
     if len(st.session_state["models"]) < 2:
         st.info("Add at least 2 models to compare them here.")
     else:
@@ -1322,33 +1744,111 @@ with tabs[-1]:
             st.dataframe(disp, use_container_width=True, hide_index=True)
 
             st.markdown("### Charts")
-            chart_col1, chart_col2 = st.columns(2)
 
-            with chart_col1:
-                st.plotly_chart(
-                    plotly_comparison_bar(comp_df, "ROI (Net)", "Net ROI by Scenario", "ROI (x)", color_map),
-                    use_container_width=True,
-                )
+            # If baseline is enabled, show combined charts with baseline; otherwise show original charts
+            if baseline_enabled and baseline_fin_for_charts is not None:
+                st.caption("Charts include the baseline (indigo) for comparison.")
 
-            with chart_col2:
-                st.plotly_chart(
-                    plotly_comparison_bar(comp_df, "Net Profit", "Net Profit by Scenario", "USD", color_map),
-                    use_container_width=True,
-                )
+                # Prepare baseline row for combined charts
+                baseline_row = {
+                    "Model": "Baseline (Traditional)",
+                    "ROI (Net)": baseline_fin_for_charts["roi_net"] if baseline_fin_for_charts["roi_net"] == baseline_fin_for_charts["roi_net"] else 0.0,
+                    "Net Profit": baseline_fin_for_charts["net_profit"],
+                    "Net Revenue": baseline_fin_for_charts["net_revenue"],
+                    "Treated Patients": baseline_fin_for_charts["estimated_treated_patients"],
+                    "Total Investment": baseline_fin_for_charts["total_baseline_investment"],
+                    "Total Cost": baseline_fin_for_charts["total_baseline_investment"],
+                }
 
-            chart_col3, chart_col4 = st.columns(2)
+                chart_col1, chart_col2 = st.columns(2)
 
-            with chart_col3:
-                st.plotly_chart(
-                    plotly_comparison_bar(comp_df, "Treated Patients", "Treated Patients by Scenario", "Patients", color_map),
-                    use_container_width=True,
-                )
+                with chart_col1:
+                    st.plotly_chart(
+                        plotly_baseline_combined_bar(
+                            comp_df,
+                            baseline_row,
+                            "ROI (Net)",
+                            "Net ROI: Models vs. Baseline",
+                            "ROI (x)",
+                            color_map,
+                        ),
+                        use_container_width=True,
+                        key="chart_roi_baseline",
+                    )
 
-            with chart_col4:
-                st.plotly_chart(
-                    plotly_comparison_bar(comp_df, "Total Cost", "Total Investment by Scenario", "USD", color_map),
-                    use_container_width=True,
-                )
+                with chart_col2:
+                    st.plotly_chart(
+                        plotly_baseline_combined_bar(
+                            comp_df,
+                            baseline_row,
+                            "Net Profit",
+                            "Net Profit: Models vs. Baseline",
+                            "USD",
+                            color_map,
+                        ),
+                        use_container_width=True,
+                        key="chart_profit_baseline",
+                    )
+
+                chart_col3, chart_col4 = st.columns(2)
+
+                with chart_col3:
+                    st.plotly_chart(
+                        plotly_baseline_combined_bar(
+                            comp_df,
+                            baseline_row,
+                            "Treated Patients",
+                            "Treated Patients: Models vs. Baseline",
+                            "Patients",
+                            color_map,
+                        ),
+                        use_container_width=True,
+                        key="chart_patients_baseline",
+                    )
+
+                with chart_col4:
+                    st.plotly_chart(
+                        plotly_baseline_combined_bar(
+                            comp_df,
+                            baseline_row,
+                            "Total Cost",
+                            "Total Investment: Models vs. Baseline",
+                            "USD",
+                            color_map,
+                        ),
+                        use_container_width=True,
+                        key="chart_cost_baseline",
+                    )
+
+            else:
+                # Original charts without baseline
+                chart_col1, chart_col2 = st.columns(2)
+
+                with chart_col1:
+                    st.plotly_chart(
+                        plotly_comparison_bar(comp_df, "ROI (Net)", "Net ROI by Scenario", "ROI (x)", color_map),
+                        use_container_width=True,
+                    )
+
+                with chart_col2:
+                    st.plotly_chart(
+                        plotly_comparison_bar(comp_df, "Net Profit", "Net Profit by Scenario", "USD", color_map),
+                        use_container_width=True,
+                    )
+
+                chart_col3, chart_col4 = st.columns(2)
+
+                with chart_col3:
+                    st.plotly_chart(
+                        plotly_comparison_bar(comp_df, "Treated Patients", "Treated Patients by Scenario", "Patients", color_map),
+                        use_container_width=True,
+                    )
+
+                with chart_col4:
+                    st.plotly_chart(
+                        plotly_comparison_bar(comp_df, "Total Cost", "Total Investment by Scenario", "USD", color_map),
+                        use_container_width=True,
+                    )
 
             st.markdown("### Per-Patient Cost Comparison")
             st.caption("Compares acquisition and platform investment on a per-treated-patient basis across selected scenarios.")
@@ -1493,4 +1993,11 @@ st.write("""
 - Phase ROI is shown as full-potential ROI scaled by the phase efficiency.
 - Phase Net Revenue is shown as full-potential Net Revenue scaled by the phase efficiency.
 - These optimization charts are a visualization layer and do not change the core annual model logic.
+
+**Baseline Comparison (when enabled):**
+- The baseline represents a traditional ad-agency / paid media approach.
+- It uses **ROAS** (Return on Ad Spend) = Gross Revenue / Media Spend.
+- It uses **ROI (Net)** = Net Profit / Total Investment — distinct from ROAS.
+- **Estimated Treated Patients** is inferred from Net Revenue / (ARPP × Treatment Years).
+- The baseline is **completely independent** of the Dario funnel model — it does not use Stage 6, funnel ratios, or funnel CAC.
 """)
