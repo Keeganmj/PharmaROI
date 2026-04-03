@@ -170,9 +170,9 @@ def compute_baseline_financials(
 
     per_patient_net_value = arpp * treatment_years
     if per_patient_net_value > 0:
-        estimated_treated_patients = net_revenue / per_patient_net_value
+        estimated_treated_patients = int(round(net_revenue / per_patient_net_value))
     else:
-        estimated_treated_patients = 0.0
+        estimated_treated_patients = 0
 
     return {
         "media_spend": media_spend,
@@ -207,7 +207,7 @@ class StageResult:
     name: str
     active: bool
     ratio_used: float
-    patients: float
+    patients: int
     cac_per_patient: float
     stage_cac: float
     cumulative_cac: float
@@ -215,7 +215,7 @@ class StageResult:
 
 def compute_funnel(stages: List[StageInput], base_population: float) -> List[StageResult]:
     results = []
-    prev_patients = max(0.0, float(base_population))
+    prev_patients = max(0, int(round(base_population)))
     total_cac_pool = 0.0
 
     for idx, s in enumerate(stages):
@@ -224,7 +224,7 @@ def compute_funnel(stages: List[StageInput], base_population: float) -> List[Sta
             ratio_used = 1.0
         else:
             ratio_used = 1.0 if not s.active else clamp(s.ratio, 0.0, 1.0)
-            patients = prev_patients * ratio_used
+            patients = int(round(prev_patients * ratio_used))
 
         if idx < 5:
             cac_pp = 0.0
@@ -262,7 +262,7 @@ def compute_financials(
     funnel_cac_total,
     platform_costs=0.0,
 ):
-    treated = max(0.0, float(treated_patients))
+    treated = max(0, int(round(treated_patients)))
     arpp = max(0.0, float(arpp))
     years = max(0.0, float(treatment_years))
     disc = clamp(discount, 0.0, 1.0)
@@ -1520,7 +1520,7 @@ for model_idx, model_tab in enumerate(tabs[:-1]):
                 "Stage": r.name,
                 "Status": "Active" if r.active else "Inactive (pass-through)",
                 "Ratio Used": "—" if ridx == 0 else pct(r.ratio_used),
-                "Patients": float(r.patients),
+                "Patients": int(r.patients),
                 "CAC ($/pt)": float(r.cac_per_patient),
                 "Stage CAC ($)": float(r.stage_cac),
                 "Cumulative CAC ($)": float(r.cumulative_cac),
