@@ -1,7 +1,6 @@
-# Data Persistence Features
-# app.py
-# PharmaROI Intelligence — Merged (V2 features + V3 persistence)
-# Run: streamlit run app_merged.py
+# No Data Persistence 
+# PharmaROI Intelligence — V3 (Multi-Model Comparison)
+# Run: streamlit run "PharmaROI Model/app_v2.py"
 
 from __future__ import annotations
 
@@ -24,8 +23,6 @@ from openpyxl import Workbook
 from openpyxl.styles import Font, PatternFill, Alignment
 from openpyxl.utils import get_column_letter
 import datetime
-
-import github_storage as gs
 
 # -----------------------------
 # Color palette
@@ -104,16 +101,18 @@ ZERO_SAMPLE = {
 # -----------------------------
 # Baseline defaults (independent of Dario funnel)
 # -----------------------------
+# These are the default assumptions for the traditional ad-agency / paid media baseline.
+# All values are independent and do not reference the Dario funnel model.
 BASELINE_DEFAULTS = {
-    "media_spend": 1_000_000.0,
-    "agency_fee": 150_000.0,
-    "creative_cost": 100_000.0,
-    "analytics_cost": 50_000.0,
-    "other_fixed_costs": 0.0,
-    "roas": 1.35,
-    "arpp": 47_400.0,
-    "treatment_years": 1.0,
-    "gross_to_net_discount": 0.68,
+    "media_spend": 1_000_000.0,        # Core paid media spend
+    "agency_fee": 150_000.0,           # Agency management fee
+    "creative_cost": 100_000.0,        # Creative / production cost
+    "analytics_cost": 50_000.0,        # Analytics / measurement cost
+    "other_fixed_costs": 0.0,          # Other fixed baseline costs
+    "roas": 1.35,                       # Return on Ad Spend (gross revenue / media spend)
+    "arpp": 47_400.0,                  # Average Revenue Per Patient (annual)
+    "treatment_years": 1.0,            # Average treatment duration in years
+    "gross_to_net_discount": 0.68,     # Gross-to-net discount rate
 }
 
 # -----------------------------
@@ -148,6 +147,40 @@ def compute_baseline_financials(
     treatment_years: float,
     gross_to_net_discount: float,
 ) -> dict:
+    """
+    Compute baseline financials for a traditional ad-agency / paid media approach.
+
+    This is ENTIRELY INDEPENDENT of the Dario funnel model.
+    It does NOT use Stage 6, funnel ratios, funnel CAC, or any Dario-specific logic.
+
+    Formulas:
+    ---------
+    total_baseline_investment = media_spend + agency_fee + creative_cost + analytics_cost + other_fixed_costs
+        -> The total amount invested in the baseline paid media campaign.
+
+    gross_revenue = media_spend * roas
+        -> ROAS is defined as gross revenue generated per dollar of media spend.
+        -> This is industry-standard: ROAS = Gross Revenue / Media Spend.
+
+    net_revenue = gross_revenue * (1 - gross_to_net_discount)
+        -> Net revenue after applying the gross-to-net discount (e.g., rebates, chargebacks).
+
+    net_profit = net_revenue - total_baseline_investment
+        -> Profit after subtracting all baseline costs from net revenue.
+
+    baseline_roi_net = net_profit / total_baseline_investment
+        -> ROI (Net) is defined as net profit divided by total investment.
+        -> This is distinct from ROAS: ROI measures profit return, ROAS measures revenue return.
+
+    estimated_treated_patients = net_revenue / (arpp * treatment_years)
+        -> Inferred patient count based on net revenue and per-patient value.
+        -> Note: This uses net_revenue (already discounted), divided by the
+           per-patient net value (arpp * treatment_years).
+        -> We do NOT apply the discount again to ARPP since net_revenue is already net.
+
+    Returns a dict with all computed baseline metrics.
+    """
+    # Ensure non-negative inputs
     media_spend = max(0.0, float(media_spend))
     agency_fee = max(0.0, float(agency_fee))
     creative_cost = max(0.0, float(creative_cost))
@@ -158,16 +191,25 @@ def compute_baseline_financials(
     treatment_years = max(0.0, float(treatment_years))
     gross_to_net_discount = clamp(gross_to_net_discount, 0.0, 1.0)
 
+    # Total investment (all baseline costs)
     total_baseline_investment = media_spend + agency_fee + creative_cost + analytics_cost + other_fixed_costs
+
+    # Gross revenue from ROAS (ROAS applies to media spend only, per industry convention)
     gross_revenue = media_spend * roas
+
+    # Net revenue after gross-to-net discount
     net_revenue = gross_revenue * (1.0 - gross_to_net_discount)
+
+    # Net profit
     net_profit = net_revenue - total_baseline_investment
 
+    # ROI (Net) = Net Profit / Total Investment
     if total_baseline_investment > 0:
         baseline_roi_net = net_profit / total_baseline_investment
     else:
         baseline_roi_net = float("nan")
 
+    # Estimated treated patients (inferred from net revenue)
     per_patient_net_value = arpp * treatment_years
     if per_patient_net_value > 0:
         estimated_treated_patients = net_revenue / per_patient_net_value
@@ -458,13 +500,18 @@ def plotly_comparison_bar(comp_df, y_col, title, y_title, color_map):
 
 
 def plotly_baseline_combined_bar(comp_df, baseline_row, y_col, title, y_title, color_map):
+    """
+    Create a grouped bar chart with models AND baseline as separate bars.
+    """
     if pd is None:
         return None
 
+    # Add baseline as a row
     combined_df = comp_df[["Model", y_col]].copy()
     baseline_df = pd.DataFrame([{"Model": "Baseline (Traditional)", y_col: baseline_row[y_col]}])
     combined_df = pd.concat([combined_df, baseline_df], ignore_index=True)
 
+    # Extend color map for baseline
     extended_color_map = color_map.copy()
     extended_color_map["Baseline (Traditional)"] = COLORS["baseline"]
 
@@ -814,6 +861,7 @@ def build_comparison_excel(comp_df, per_patient_df, phase_comp_df, diff_df, mode
             max_len = max(len(str(col)), *(len(str(v)) for v in df[col].head(50).tolist())) if len(df) > 0 else len(str(col))
             ws.column_dimensions[get_column_letter(i)].width = min(max(max_len + 2, 14), 36)
 
+    # Sheet 1 — Key Metrics
     ws1 = wb.active
     ws1.title = "Key Metrics"
     metrics_formats = {
@@ -833,6 +881,7 @@ def build_comparison_excel(comp_df, per_patient_df, phase_comp_df, diff_df, mode
     }
     write_df_to_sheet(ws1, comp_df, metrics_formats)
 
+    # Conditional formatting — green = best, amber = worst
     higher_is_better = {"ROI (Net)", "Net Profit", "Net Revenue", "Treated Patients", "Gross Revenue"}
     lower_is_better = {"Total Cost", "Funnel CAC", "Platform Costs", "Total Cost per Treated Patient",
                        "Funnel CAC per Treated Patient", "Platform Costs per Treated Patient"}
@@ -850,6 +899,7 @@ def build_comparison_excel(comp_df, per_patient_df, phase_comp_df, diff_df, mode
             except Exception:
                 pass
 
+    # Sheet 2 — Per Patient Costs
     ws2 = wb.create_sheet("Per Patient Costs")
     pp_formats = {
         "Treated Patients": "#,##0",
@@ -859,6 +909,7 @@ def build_comparison_excel(comp_df, per_patient_df, phase_comp_df, diff_df, mode
     }
     write_df_to_sheet(ws2, per_patient_df, pp_formats)
 
+    # Sheet 3 — Optimization Phases
     if phase_comp_df is not None and len(phase_comp_df) > 0:
         ws3 = wb.create_sheet("Optimization Phases")
         phase_formats = {
@@ -868,10 +919,12 @@ def build_comparison_excel(comp_df, per_patient_df, phase_comp_df, diff_df, mode
         }
         write_df_to_sheet(ws3, phase_comp_df, phase_formats)
 
+    # Sheet 4 — Model Diff
     if diff_df is not None and len(diff_df) > 0:
         ws4 = wb.create_sheet("Model Diff")
         write_df_to_sheet(ws4, diff_df)
 
+    # Sheet 5 — Metadata
     ws5 = wb.create_sheet("Metadata")
     ws5["A1"] = "Comparison Export Metadata"
     ws5["A1"].font = Font(bold=True, size=13)
@@ -908,277 +961,13 @@ def init_session():
     if "baseline_enabled" not in st.session_state:
         st.session_state["baseline_enabled"] = False
 
-    # Active client tracking (from V3)
-    if "active_client_name" not in st.session_state:
-        st.session_state["active_client_name"] = None
-    # Storage UI state (from V3)
-    if "storage_client_list" not in st.session_state:
-        st.session_state["storage_client_list"] = None
-    if "storage_feedback" not in st.session_state:
-        st.session_state["storage_feedback"] = None
-    if "confirm_delete_client" not in st.session_state:
-        st.session_state["confirm_delete_client"] = False
-    # New client flow state (from V3)
-    if "confirm_new_client" not in st.session_state:
-        st.session_state["confirm_new_client"] = False
-    if "pending_new_client_name" not in st.session_state:
-        st.session_state["pending_new_client_name"] = ""
-
 init_session()
-
-# -----------------------------
-# Page config
-# -----------------------------
-st.set_page_config(page_title="PharmaROI Calculator", page_icon="", layout="wide")
-
-# ==============================
-# SIDEBAR — Client Save / Load (from V3)
-# ==============================
-with st.sidebar:
-    st.markdown("## 💾 Client Files")
-
-    # ── Active client indicator ──────────────────────────────────────────────
-    active = st.session_state["active_client_name"]
-    if active:
-        st.success(f"📂 Active: **{active}**")
-    else:
-        st.warning("⚪ New unsaved session")
-
-    st.divider()
-
-    # ── NEW CLIENT section ───────────────────────────────────────────────────
-    st.markdown("### ✨ New Client")
-
-    if not st.session_state["confirm_new_client"]:
-        new_client_name = st.text_input(
-            "New client name",
-            placeholder="e.g. Sanofi",
-            key="new_client_name_input",
-            label_visibility="collapsed",
-        )
-        if st.button("➕ Create New Client", use_container_width=True, disabled=not new_client_name.strip()):
-            st.session_state["pending_new_client_name"] = new_client_name.strip()
-            st.session_state["confirm_new_client"] = True
-            st.rerun()
-    else:
-        pending = st.session_state["pending_new_client_name"]
-        st.warning(
-            f"Start a new session for **{pending}**?\n\n"
-            f"Any unsaved work will be lost."
-        )
-        nc_col1, nc_col2 = st.columns(2)
-        with nc_col1:
-            if st.button("Yes, Start Fresh", use_container_width=True, type="primary"):
-                st.session_state["models"] = [copy.deepcopy(SPONSOR_DEFAULTS)]
-                st.session_state["model_names"] = ["Model 1"]
-                st.session_state["active_model_idx"] = 0
-                st.session_state["active_client_name"] = pending
-                st.session_state["baseline_assumptions"] = copy.deepcopy(BASELINE_DEFAULTS)
-                st.session_state["baseline_enabled"] = False
-                st.session_state["storage_feedback"] = f"✨ New session started for **{pending}**"
-                st.session_state["confirm_new_client"] = False
-                st.session_state["pending_new_client_name"] = ""
-                st.rerun()
-        with nc_col2:
-            if st.button("Cancel", use_container_width=True):
-                st.session_state["confirm_new_client"] = False
-                st.session_state["pending_new_client_name"] = ""
-                st.rerun()
-
-    st.divider()
-
-    # ── Refresh client list ──────────────────────────────────────────────────
-    if st.button("🔄 Refresh Client List", use_container_width=True):
-        st.session_state["storage_client_list"] = gs.list_clients()
-        st.session_state["storage_feedback"] = None
-        st.session_state["confirm_delete_client"] = False
-
-    if st.session_state["storage_client_list"] is None:
-        st.session_state["storage_client_list"] = gs.list_clients()
-
-    client_list = st.session_state["storage_client_list"] or []
-
-    # ── LOAD section ────────────────────────────────────────────────────────
-    st.markdown("### Load a Client")
-    if client_list:
-        selected_client = st.selectbox(
-            "Saved clients",
-            options=client_list,
-            key="sidebar_load_select",
-            label_visibility="collapsed",
-        )
-        if st.button("📂 Load Client", use_container_width=True):
-            payload = gs.load_client(selected_client)
-            if payload:
-                st.session_state["models"] = payload["models"]
-                st.session_state["model_names"] = payload["model_names"]
-                # Also restore baseline assumptions if they were saved
-                if "baseline_assumptions" in payload:
-                    st.session_state["baseline_assumptions"] = payload["baseline_assumptions"]
-                if "baseline_enabled" in payload:
-                    st.session_state["baseline_enabled"] = payload["baseline_enabled"]
-                st.session_state["active_model_idx"] = 0
-                st.session_state["active_client_name"] = selected_client
-                st.session_state["storage_feedback"] = f"✅ Loaded **{selected_client}**"
-                st.rerun()
-    else:
-        st.info("No saved clients yet.")
-
-    st.divider()
-
-    # ── SAVE section ────────────────────────────────────────────────────────
-    st.markdown("### Save Current Work")
-    save_name = st.text_input(
-        "Client name",
-        value=st.session_state["active_client_name"] or "",
-        placeholder="e.g. Sanofi",
-        key="sidebar_save_name",
-        label_visibility="collapsed",
-    )
-    if st.button("💾 Save Client", use_container_width=True, disabled=not save_name.strip()):
-        payload = {
-            "models": st.session_state["models"],
-            "model_names": st.session_state["model_names"],
-            # Also persist baseline assumptions alongside models
-            "baseline_assumptions": st.session_state["baseline_assumptions"],
-            "baseline_enabled": st.session_state["baseline_enabled"],
-        }
-        ok = gs.save_client(save_name.strip(), payload)
-        if ok:
-            st.session_state["storage_client_list"] = gs.list_clients()
-            st.session_state["active_client_name"] = save_name.strip()
-            st.session_state["storage_feedback"] = f"✅ Saved as **{save_name.strip()}**"
-            st.rerun()
-
-    st.divider()
-
-    # ── DELETE section ───────────────────────────────────────────────────────
-    st.markdown("### Manage Clients")
-    if client_list:
-        delete_target = st.selectbox(
-            "Select client to delete",
-            options=client_list,
-            key="sidebar_delete_select",
-            label_visibility="collapsed",
-        )
-        if not st.session_state["confirm_delete_client"]:
-            if st.button("🗑️ Delete Client", use_container_width=True):
-                st.session_state["confirm_delete_client"] = True
-                st.rerun()
-        else:
-            st.warning(f"Permanently delete **{delete_target}**? This cannot be undone.")
-            d_col1, d_col2 = st.columns(2)
-            with d_col1:
-                if st.button("Yes, Delete", use_container_width=True, type="primary"):
-                    ok = gs.delete_client(delete_target)
-                    if ok:
-                        st.session_state["storage_client_list"] = gs.list_clients()
-                        st.session_state["storage_feedback"] = f"🗑️ Deleted **{delete_target}**"
-                    st.session_state["confirm_delete_client"] = False
-                    st.rerun()
-            with d_col2:
-                if st.button("Cancel", use_container_width=True):
-                    st.session_state["confirm_delete_client"] = False
-                    st.rerun()
-    else:
-        st.caption("No clients to manage.")
-
-    st.divider()
-
-    # ── LOCAL FILE section ───────────────────────────────────────────────────
-    with st.expander("📁 Local File Import / Export", expanded=False):
-        st.caption("Download your current session as a JSON file, or upload a previously saved one.")
-
-        # ── Download JSON ────────────────────────────────────────────────────
-        st.markdown("**Download current session**")
-        local_download_name = st.text_input(
-            "File name (no extension)",
-            placeholder="e.g. Sanofi_backup",
-            key="local_download_name",
-            label_visibility="collapsed",
-        )
-        if local_download_name.strip():
-            local_payload = {
-                "models": st.session_state["models"],
-                "model_names": st.session_state["model_names"],
-                "baseline_assumptions": st.session_state["baseline_assumptions"],
-                "baseline_enabled": st.session_state["baseline_enabled"],
-            }
-            import json as _json
-            json_bytes = _json.dumps(local_payload, indent=2).encode("utf-8")
-            st.download_button(
-                "⬇️ Download as JSON",
-                data=json_bytes,
-                file_name=f"{local_download_name.strip()}.json",
-                mime="application/json",
-                use_container_width=True,
-                key="local_json_download",
-            )
-        else:
-            st.button(
-                "⬇️ Download as JSON",
-                disabled=True,
-                use_container_width=True,
-                key="local_json_download_disabled",
-                help="Enter a file name above to enable download",
-            )
-
-        st.divider()
-
-        # ── Upload JSON ──────────────────────────────────────────────────────
-        st.markdown("**Upload a saved JSON file**")
-        st.caption("This will replace all current models with the contents of the file.")
-        uploaded_file = st.file_uploader(
-            "Choose a JSON file",
-            type=["json"],
-            key="local_json_upload",
-            label_visibility="collapsed",
-        )
-        if uploaded_file is not None:
-            if st.button("📂 Load from File", use_container_width=True):
-                try:
-                    import json as _json
-                    payload = _json.loads(uploaded_file.read().decode("utf-8"))
-                    if "models" in payload and "model_names" in payload:
-                        st.session_state["models"] = payload["models"]
-                        st.session_state["model_names"] = payload["model_names"]
-                        if "baseline_assumptions" in payload:
-                            st.session_state["baseline_assumptions"] = payload["baseline_assumptions"]
-                        if "baseline_enabled" in payload:
-                            st.session_state["baseline_enabled"] = payload["baseline_enabled"]
-                        st.session_state["active_model_idx"] = 0
-                        st.session_state["active_client_name"] = uploaded_file.name.replace(".json", "")
-                        st.session_state["storage_feedback"] = f"✅ Loaded from **{uploaded_file.name}**"
-                        st.rerun()
-                    else:
-                        st.error("Invalid file format — make sure this is a PharmaROI JSON export.")
-                except Exception as e:
-                    st.error(f"Could not read file: {e}")
-
-    # ── Feedback banner ──────────────────────────────────────────────────────
-    if st.session_state["storage_feedback"]:
-        st.success(st.session_state["storage_feedback"])
 
 # -----------------------------
 # Page title
 # -----------------------------
+st.set_page_config(page_title="PharmaROI Calculator", page_icon="", layout="wide")
 st.title("PharmaROI Calculator")
-
-_active = st.session_state.get("active_client_name")
-if _active:
-    st.markdown(
-        f"<div style='display:inline-block; background:#0F6CBD18; border:1px solid #0F6CBD55; "
-        f"border-radius:6px; padding:4px 14px; margin-bottom:6px;'>"
-        f"📂 <strong>Active Client:</strong> {_active}</div>",
-        unsafe_allow_html=True,
-    )
-else:
-    st.markdown(
-        "<div style='display:inline-block; background:#F59E0B18; border:1px solid #F59E0B55; "
-        "border-radius:6px; padding:4px 14px; margin-bottom:6px;'>"
-        "⚪ <strong>New unsaved session</strong> — use the sidebar to name and save your work.</div>",
-        unsafe_allow_html=True,
-    )
 st.caption("Build multiple ROI models side-by-side and compare them in the Comparison tab.")
 
 # -----------------------------
@@ -1618,7 +1407,8 @@ with tabs[-1]:
     st.subheader("Model Comparison")
 
     # ---------------------------------------------------------
-    # BASELINE COMPARISON SECTION
+    # BASELINE COMPARISON SECTION (Independent of Dario Funnel)
+    # Placed at the top so it's always visible regardless of model count
     # ---------------------------------------------------------
     st.markdown("---")
     st.markdown("### Baseline Comparison")
@@ -1627,6 +1417,7 @@ with tabs[-1]:
         "The baseline uses ROAS-based assumptions and is **completely independent** of the Dario funnel logic."
     )
 
+    # Toggle for baseline
     baseline_enabled = st.checkbox(
         "Enable Baseline Comparison",
         value=st.session_state.get("baseline_enabled", False),
@@ -1636,8 +1427,10 @@ with tabs[-1]:
     st.session_state["baseline_enabled"] = baseline_enabled
 
     if baseline_enabled:
+        # Get baseline assumptions from session state
         bl = st.session_state["baseline_assumptions"]
 
+        # Baseline assumptions input section
         with st.expander("Baseline Assumptions (Edit Here)", expanded=True):
             st.markdown(
                 "**About the Baseline:** This represents a traditional ad-agency / paid media approach. "
@@ -1735,8 +1528,10 @@ with tabs[-1]:
                     help="Average duration of treatment in years (used to infer patient count)."
                 )
 
+            # Save updated assumptions back to session state
             st.session_state["baseline_assumptions"] = bl
 
+        # Compute baseline financials
         baseline_fin = compute_baseline_financials(
             media_spend=bl["media_spend"],
             agency_fee=bl["agency_fee"],
@@ -1749,6 +1544,7 @@ with tabs[-1]:
             gross_to_net_discount=bl["gross_to_net_discount"],
         )
 
+        # Baseline KPI summary
         st.markdown("#### Baseline Summary")
         st.caption(
             "These metrics are calculated using the baseline assumptions above. "
@@ -1787,6 +1583,7 @@ with tabs[-1]:
             help="Inferred from Net Revenue / (ARPP × Treatment Years)"
         )
 
+        # Summary stats row
         sum_col1, sum_col2, sum_col3 = st.columns(3)
         with sum_col1:
             st.caption(f"Gross Revenue: **{money(baseline_fin['gross_revenue'])}**")
@@ -1795,6 +1592,7 @@ with tabs[-1]:
         with sum_col3:
             st.caption(f"Media Spend: **{money(baseline_fin['media_spend'])}**")
 
+        # Baseline detailed breakdown table
         st.markdown("#### Baseline Detailed Breakdown")
 
         if pd is not None:
@@ -1831,6 +1629,7 @@ with tabs[-1]:
             baseline_detail_disp = baseline_detail_disp[["Metric", "Value"]]
             st.dataframe(baseline_detail_disp, use_container_width=True, hide_index=True)
 
+            # Export baseline data
             baseline_export_df = baseline_detail_df[["Metric", "Value"]].copy()
             st.download_button(
                 "⬇️ Download Baseline Data (Excel)",
@@ -1842,6 +1641,7 @@ with tabs[-1]:
         else:
             st.info("Baseline table requires pandas.")
 
+    # Store baseline_fin for use in comparison charts below (if enabled)
     baseline_fin_for_charts = None
     if baseline_enabled:
         bl = st.session_state["baseline_assumptions"]
@@ -1945,9 +1745,11 @@ with tabs[-1]:
 
             st.markdown("### Charts")
 
+            # If baseline is enabled, show combined charts with baseline; otherwise show original charts
             if baseline_enabled and baseline_fin_for_charts is not None:
                 st.caption("Charts include the baseline (indigo) for comparison.")
 
+                # Prepare baseline row for combined charts
                 baseline_row = {
                     "Model": "Baseline (Traditional)",
                     "ROI (Net)": baseline_fin_for_charts["roi_net"] if baseline_fin_for_charts["roi_net"] == baseline_fin_for_charts["roi_net"] else 0.0,
@@ -1962,14 +1764,28 @@ with tabs[-1]:
 
                 with chart_col1:
                     st.plotly_chart(
-                        plotly_baseline_combined_bar(comp_df, baseline_row, "ROI (Net)", "Net ROI: Models vs. Baseline", "ROI (x)", color_map),
+                        plotly_baseline_combined_bar(
+                            comp_df,
+                            baseline_row,
+                            "ROI (Net)",
+                            "Net ROI: Models vs. Baseline",
+                            "ROI (x)",
+                            color_map,
+                        ),
                         use_container_width=True,
                         key="chart_roi_baseline",
                     )
 
                 with chart_col2:
                     st.plotly_chart(
-                        plotly_baseline_combined_bar(comp_df, baseline_row, "Net Profit", "Net Profit: Models vs. Baseline", "USD", color_map),
+                        plotly_baseline_combined_bar(
+                            comp_df,
+                            baseline_row,
+                            "Net Profit",
+                            "Net Profit: Models vs. Baseline",
+                            "USD",
+                            color_map,
+                        ),
                         use_container_width=True,
                         key="chart_profit_baseline",
                     )
@@ -1978,19 +1794,34 @@ with tabs[-1]:
 
                 with chart_col3:
                     st.plotly_chart(
-                        plotly_baseline_combined_bar(comp_df, baseline_row, "Treated Patients", "Treated Patients: Models vs. Baseline", "Patients", color_map),
+                        plotly_baseline_combined_bar(
+                            comp_df,
+                            baseline_row,
+                            "Treated Patients",
+                            "Treated Patients: Models vs. Baseline",
+                            "Patients",
+                            color_map,
+                        ),
                         use_container_width=True,
                         key="chart_patients_baseline",
                     )
 
                 with chart_col4:
                     st.plotly_chart(
-                        plotly_baseline_combined_bar(comp_df, baseline_row, "Total Cost", "Total Investment: Models vs. Baseline", "USD", color_map),
+                        plotly_baseline_combined_bar(
+                            comp_df,
+                            baseline_row,
+                            "Total Cost",
+                            "Total Investment: Models vs. Baseline",
+                            "USD",
+                            color_map,
+                        ),
                         use_container_width=True,
                         key="chart_cost_baseline",
                     )
 
             else:
+                # Original charts without baseline
                 chart_col1, chart_col2 = st.columns(2)
 
                 with chart_col1:
@@ -2150,7 +1981,6 @@ st.write("""
 - Each **model tab** is fully independent — tweak funnel stages, ratios, CAC, ARPP, and discount separately.
 - Use **Add New Model** or **Duplicate Current** to create variants.
 - The **Comparison** tab shows all models side-by-side with charts and a downloadable table.
-- Use the **sidebar** to save your current work under a client name, or load a previously saved client.
 - **ROI (Net)** = Net Revenue / (Funnel CAC + Platform Costs)
 - **Net Profit** = Net Revenue − Funnel CAC − Platform Costs
 - **Net Revenue** = Gross Revenue × (1 − Discount)
