@@ -1266,15 +1266,9 @@ for model_idx, model_tab in enumerate(tabs[:-1]):
         with st.expander("Model Settings", expanded=(model_idx == st.session_state["active_model_idx"])):
             st.session_state["active_model_idx"] = model_idx
 
-            col_r1, col_r2 = st.columns(2)
-            with col_r1:
-                if st.button("Reset: Sponsor Example", key=f"reset_sponsor_{model_idx}"):
-                    st.session_state["models"][model_idx] = copy.deepcopy(SPONSOR_DEFAULTS)
-                    st.rerun()
-            with col_r2:
-                if st.button("Reset: Zero", key=f"reset_zero_{model_idx}"):
-                    st.session_state["models"][model_idx] = copy.deepcopy(ZERO_SAMPLE)
-                    st.rerun()
+            if st.button("Reset to Zero", key=f"reset_zero_{model_idx}", use_container_width=True):
+                st.session_state["models"][model_idx] = copy.deepcopy(ZERO_SAMPLE)
+                st.rerun()
 
             st.markdown("**Base Population**")
             state["base_population"] = st.number_input(
