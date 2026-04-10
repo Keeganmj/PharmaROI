@@ -65,24 +65,6 @@ STAGE_NAMES: List[str] = [
     "Get prescription for Rezdiffra",
 ]
 
-SPONSOR_DEFAULTS = {
-    "base_population": 10_000_000,
-    "ratios": [1.00, 0.35, 0.16, 0.22, 0.75, 0.40, 0.15, 0.80, 1.00, 0.75, 0.90, 0.50, 0.90],
-    "cac": [0.0, 0.0, 0.0, 0.0, 0.0, 10.0, 67.0, 83.0, 83.0, 111.0, 123.0, 247.0, 274.0],
-    "arpp": 47_400.0,
-    "treatment_years": 1.0,
-    "discount": 0.68,
-    "stage_active": [True] * len(STAGE_NAMES),
-    "stage_names": STAGE_NAMES[:],
-    "platform_costs": {
-        "dario_connect_config": 500_000.0,
-        "dario_care_config": 500_000.0,
-        "sub_dario_connect": 1_000_000.0,
-        "sub_dario_care": 250_000.0,
-        "maintenance_support": 250_000.0,
-    },
-}
-
 ZERO_SAMPLE = {
     "base_population": 0,
     "ratios": [0.0] * len(STAGE_NAMES),
@@ -896,7 +878,7 @@ def build_comparison_excel(comp_df, per_patient_df, phase_comp_df, diff_df, mode
 # -----------------------------
 def init_session():
     if "models" not in st.session_state:
-        st.session_state["models"] = [copy.deepcopy(SPONSOR_DEFAULTS)]
+        st.session_state["models"] = [copy.deepcopy(ZERO_SAMPLE)]
         st.session_state["model_names"] = ["Model 1"]
         st.session_state["active_model_idx"] = 0
 
@@ -969,7 +951,7 @@ with st.sidebar:
         nc_col1, nc_col2 = st.columns(2)
         with nc_col1:
             if st.button("Yes, Start Fresh", use_container_width=True, type="primary"):
-                st.session_state["models"] = [copy.deepcopy(SPONSOR_DEFAULTS)]
+                st.session_state["models"] = [copy.deepcopy(ZERO_SAMPLE)]
                 st.session_state["model_names"] = ["Model 1"]
                 st.session_state["active_model_idx"] = 0
                 st.session_state["active_client_name"] = pending
@@ -1189,7 +1171,7 @@ mgmt_col1, mgmt_col2, mgmt_col3, mgmt_col4 = st.columns([2, 2, 2, 4])
 with mgmt_col1:
     if st.button("➕ Add New Model", use_container_width=True):
         n = len(st.session_state["models"]) + 1
-        st.session_state["models"].append(copy.deepcopy(SPONSOR_DEFAULTS))
+        st.session_state["models"].append(copy.deepcopy(ZERO_SAMPLE))
         st.session_state["model_names"].append(f"Model {n}")
         st.session_state["active_model_idx"] = len(st.session_state["models"]) - 1
         st.rerun()
@@ -1346,7 +1328,7 @@ for model_idx, model_tab in enumerate(tabs[:-1]):
 
             st.markdown("**Platform Costs**")
             if "platform_costs" not in state:
-                state["platform_costs"] = SPONSOR_DEFAULTS["platform_costs"].copy()
+                state["platform_costs"] = ZERO_SAMPLE["platform_costs"].copy()
             pc = state["platform_costs"]
             pc_col1, pc_col2 = st.columns(2)
             with pc_col1:
